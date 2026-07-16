@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考勤数据分析系统</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg-primary:#0f1117;--bg-secondary:#1a1d27;--bg-tertiary:#242836;--bg-hover:#2d3244;--border:#2d3244;--text-primary:#e5e7eb;--text-secondary:#9ca3af;--text-muted:#6b7280;--accent:#6366f1;--accent-hover:#818cf8;--accent-dim:rgba(99,102,241,.15);--success:#22c55e;--success-dim:rgba(34,197,94,.15);--warning:#f59e0b;--warning-dim:rgba(245,158,11,.15);--danger:#ef4444;--danger-dim:rgba(239,68,68,.15);--info:#3b82f6;--info-dim:rgba(59,130,246,.15);--radius:10px;--shadow:0 4px 24px rgba(0,0,0,.3);--sidebar-w:240px;--sidebar-collapsed-w:60px}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:var(--bg-primary);color:var(--text-primary);min-height:100vh;overflow-x:hidden}
+a{color:var(--accent);cursor:pointer;text-decoration:none}a:hover{text-decoration:underline}
+
+/* Login */
+.login-page{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f1117,#1a1d27,#0f1117)}
+.login-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:16px;padding:48px 40px;width:420px;box-shadow:var(--shadow)}
+.login-card h1{text-align:center;font-size:24px;font-weight:700;margin-bottom:8px;background:linear-gradient(135deg,#6366f1,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.login-card .sub{text-align:center;color:var(--text-secondary);font-size:14px;margin-bottom:32px}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-size:13px;font-weight:500;color:var(--text-secondary);margin-bottom:6px}
+.form-group input,.form-group select{width:100%;padding:12px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;outline:none;transition:border-color .2s;font-family:inherit}
+.form-group input:focus,.form-group select:focus{border-color:var(--accent)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 24px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;font-family:inherit}
+.btn-primary{background:var(--accent);color:#fff;width:100%}.btn-primary:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.btn-secondary{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border)}.btn-secondary:hover{background:var(--bg-hover)}
+.btn-success{background:var(--success);color:#fff}.btn-success:hover{opacity:.9}
+.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover{opacity:.9}
+.btn-sm{padding:8px 16px;font-size:13px}.btn-xs{padding:4px 10px;font-size:12px;border-radius:6px}
+.btn-icon{width:32px;height:32px;padding:0;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:16px;background:var(--bg-tertiary);border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;transition:all .15s}
+.btn-icon:hover{border-color:var(--accent);color:var(--accent)}
+.err{color:var(--danger);font-size:13px;margin-bottom:12px;text-align:center}
+
+/* Layout */
+.app-layout{display:flex;min-height:100vh}
+.sidebar{width:var(--sidebar-w);background:var(--bg-secondary);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;transition:width .3s ease;overflow:hidden}
+.sidebar.collapsed{width:var(--sidebar-collapsed-w)}
+.sidebar-header{padding:20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;min-height:68px}
+.sidebar-header h2{font-size:17px;font-weight:700;background:linear-gradient(135deg,#6366f1,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}
+.sidebar.collapsed .sidebar-header h2{display:none}
+.sidebar-toggle{background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;padding:4px;flex-shrink:0;transition:color .15s}.sidebar-toggle:hover{color:var(--text-primary)}
+.sidebar-role{display:block;font-size:11px;padding:2px 8px;border-radius:12px;font-weight:500;margin-top:4px;white-space:nowrap}
+.sidebar.collapsed .sidebar-role{display:none}
+.r-admin{background:var(--accent-dim);color:var(--accent)}.r-user{background:var(--info-dim);color:var(--info)}
+.sidebar-nav{flex:1;padding:10px;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:14px;color:var(--text-secondary);transition:all .15s;margin-bottom:2px;white-space:nowrap}
+.nav-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.nav-item.active{background:var(--accent-dim);color:var(--accent);font-weight:500}
+.nav-item .icon{font-size:17px;width:24px;text-align:center;flex-shrink:0}
+.sidebar.collapsed .nav-item{justify-content:center;padding:10px 0}
+.sidebar.collapsed .nav-item .nav-text{display:none}
+.sidebar-footer{padding:12px;border-top:1px solid var(--border)}
+.btn-logout{width:100%;padding:10px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text-secondary);cursor:pointer;font-size:13px;font-family:inherit;transition:all .15s;white-space:nowrap}
+.btn-logout:hover{border-color:var(--danger);color:var(--danger)}
+.sidebar.collapsed .btn-logout span{display:none}
+.sidebar.collapsed .btn-logout::after{content:'🚪';font-size:16px}
+.main-content{flex:1;margin-left:var(--sidebar-w);padding:32px;min-height:100vh;transition:margin-left .3s ease}
+.sidebar.collapsed~.main-content{margin-left:var(--sidebar-collapsed-w)}
+.page-header{margin-bottom:28px}.page-header h1{font-size:26px;font-weight:700;margin-bottom:6px}.page-header p{color:var(--text-secondary);font-size:14px}
+.readonly-tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;background:var(--warning-dim);color:var(--warning);margin-left:8px;vertical-align:middle}
+
+/* Cards */
+.card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:24px}
+.card-title{font-size:16px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.stat-card .label{font-size:13px;color:var(--text-secondary);margin-bottom:8px}.stat-card .value{font-size:28px;font-weight:700}
+.c-accent{color:var(--accent)}.c-success{color:var(--success)}.c-warning{color:var(--warning)}.c-danger{color:var(--danger)}
+
+/* Upload */
+.upload-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:48px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.upload-zone:hover{border-color:var(--accent);background:var(--accent-dim)}
+.upload-zone .icon{font-size:48px;margin-bottom:16px;opacity:.6}.upload-zone p{color:var(--text-secondary);font-size:14px}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.progress-bar{height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;margin:16px 0}
+.progress-bar .fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-hover));border-radius:2px;transition:width .3s;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Table */
+.table-wrapper{overflow-x:auto}
+.toolbar{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.search-wrap{position:relative;flex:1;min-width:200px}
+.search-input{width:100%;padding:10px 14px 10px 36px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;outline:none;font-family:inherit;transition:border-color .2s}
+.search-input:focus{border-color:var(--accent)}
+.search-wrap::before{content:'🔍';position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;pointer-events:none}
+table{width:100%;border-collapse:collapse}
+th{padding:12px 16px;text-align:left;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--text-primary)}th .sa{margin-left:4px;font-size:10px}
+td{padding:12px 16px;font-size:14px;border-bottom:1px solid var(--border)}
+tr:hover td{background:var(--bg-hover)}
+tr.expand-row td{background:var(--bg-primary);padding:16px 20px}
+.badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:500}
+.badge-success{background:var(--success-dim);color:var(--success)}.badge-warning{background:var(--warning-dim);color:var(--warning)}.badge-danger{background:var(--danger-dim);color:var(--danger)}.badge-info{background:var(--info-dim);color:var(--info)}.badge-group{background:var(--accent-dim);color:var(--accent);margin:2px}
+.toast{position:fixed;top:24px;right:24px;padding:14px 24px;border-radius:8px;font-size:14px;font-weight:500;z-index:9999;animation:slideIn .3s ease;box-shadow:var(--shadow)}
+.toast-success{background:#065f46;color:#6ee7b7;border:1px solid #059669}.toast-error{background:#7f1d1d;color:#fca5a5;border:1px solid #dc2626}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* Day grid */
+.day-grid{display:flex;flex-wrap:wrap;gap:4px}
+.day-cell{width:56px;height:50px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;line-height:1.3;border:1px solid transparent;transition:transform .1s}
+.day-cell:hover{transform:scale(1.12);z-index:1}
+.day-cell.normal{background:rgba(34,197,94,.18);color:var(--success);border-color:rgba(34,197,94,.3)}
+.day-cell.abnormal{background:rgba(245,158,11,.18);color:var(--warning);border-color:rgba(245,158,11,.3)}
+.day-cell.absent{background:rgba(239,68,68,.12);color:var(--danger);border-color:rgba(239,68,68,.2)}
+.day-cell .dn{font-weight:700;font-size:12px}.day-cell .dt{font-size:9px;opacity:.8}
+.attend-bar{height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;display:flex;margin-top:4px}
+.attend-bar .seg{height:100%}.seg-g{background:var(--success)}.seg-y{background:var(--warning)}.seg-r{background:var(--danger)}
+
+/* Pagination */
+.pagination{display:flex;align-items:center;justify-content:space-between;padding:16px 0;gap:12px}
+.page-info{font-size:13px;color:var(--text-secondary)}
+.page-btns{display:flex;gap:4px}
+.page-btn{padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:13px;font-family:inherit;transition:all .15s}
+.page-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.page-btn:disabled{opacity:.3;cursor:not-allowed}.page-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* Misc */
+.user-list{list-style:none}.user-item{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}.user-item:last-child{border-bottom:none}
+.user-info{display:flex;align-items:center;gap:12px}
+.user-avatar{width:36px;height:36px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;color:var(--accent);overflow:hidden}.user-avatar img{width:100%;height:100%;object-fit:cover}
+.user-name{font-weight:500;font-size:14px}.user-meta{font-size:12px;color:var(--text-muted)}
+.empty-state{text-align:center;padding:64px 24px;color:var(--text-muted)}.empty-state .icon{font-size:64px;margin-bottom:16px;opacity:.4}.empty-state p{font-size:14px}
+.time-period-row{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;margin-bottom:10px}
+.time-period-row input[type=time]{padding:8px 12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:14px;outline:none;font-family:inherit}
+.time-period-row input[type=time]:focus{border-color:var(--accent)}.time-period-row .label{font-size:13px;color:var(--text-secondary);white-space:nowrap}
+.form-hint{font-size:12px;color:var(--text-muted);margin-top:4px}
+.group-card{display:flex;align-items:center;justify-content:space-between;padding:16px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;transition:border-color .15s}.group-card:hover{border-color:var(--accent)}
+.group-card .info{display:flex;align-items:center;gap:12px}.group-card .name{font-weight:600;font-size:15px}.group-card .count{font-size:12px;color:var(--text-muted);margin-top:2px}
+.profile-avatar{width:80px;height:80px;border-radius:50%;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;color:var(--accent);margin:0 auto 16px;overflow:hidden;position:relative;cursor:pointer}
+.profile-avatar img{width:100%;height:100%;object-fit:cover}
+.profile-avatar .overlay{position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;opacity:0;transition:opacity .2s;border-radius:50%}.profile-avatar:hover .overlay{opacity:1}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal{background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:28px;width:500px;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h3{font-size:18px;margin-bottom:20px}.modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.checkbox-list{max-height:300px;overflow-y:auto}
+.checkbox-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:6px;cursor:pointer;transition:background .1s}.checkbox-item:hover{background:var(--bg-hover)}
+.checkbox-item input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.select-all{padding:8px 12px;font-size:13px;color:var(--accent);cursor:pointer;border-bottom:1px solid var(--border);margin-bottom:4px}
+.perm-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}
+.perm-item{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s}.perm-item:hover{border-color:var(--accent)}
+.perm-item input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}.perm-item label{cursor:pointer;font-size:13px}
+@media(max-width:768px){.stats-grid{grid-template-columns:repeat(2,1fr)}.perm-grid{grid-template-columns:1fr}}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px}
+.chart-card{background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:24px}
+.chart-card h3{font-size:15px;font-weight:600;margin-bottom:16px;color:var(--text-primary)}
+.chart-card canvas{max-height:280px}
+@media(max-width:768px){.charts-grid{grid-template-columns:1fr}}
+.merge-bar{display:flex;align-items:center;gap:12px;padding:16px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;flex-wrap:wrap}
+.merge-bar .label{font-size:13px;color:var(--text-secondary);white-space:nowrap}
+.merge-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;background:var(--accent-dim);color:var(--accent);border-radius:16px;font-size:13px;font-weight:500}
+.merge-chip .remove{cursor:pointer;font-size:14px;opacity:.7}.merge-chip .remove:hover{opacity:1}
+</style>
+</head>
+<body>
+<div id="app">
+  <div v-if="toast.show" :class="['toast',toast.type==='success'?'toast-success':'toast-error']">{{toast.message}}</div>
+
+  <!-- Login -->
+  <div v-if="!user" class="login-page">
+    <div class="login-card">
+      <h1>📊 考勤数据分析</h1>
+      <p class="sub">{{isRegister?'创建新账号':'登录到系统'}}</p>
+      <div v-if="loginError" class="err">{{loginError}}</div>
+      <div class="form-group"><label>用户名</label><input v-model="loginForm.username" placeholder="请输入用户名" @keyup.enter="handleLogin"></div>
+      <div class="form-group"><label>密码</label><input v-model="loginForm.password" type="password" placeholder="请输入密码" @keyup.enter="handleLogin"></div>
+      <button class="btn btn-primary" @click="handleLogin" :disabled="loginLoading"><span v-if="loginLoading" class="spinner"></span>{{loginLoading?'处理中...':(isRegister?'注册并登录':'登录')}}</button>
+      <p style="text-align:center;margin-top:24px;font-size:13px;color:var(--text-secondary)">
+        <template v-if="isRegister">已有账号？<a @click="isRegister=false;loginError=''">去登录</a></template>
+        <template v-else>没有账号？<a @click="isRegister=true;loginError=''">注册</a></template>
+      </p>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div v-else class="app-layout">
+    <aside :class="['sidebar',sidebarCollapsed&&'collapsed']">
+      <div class="sidebar-header">
+        <button class="sidebar-toggle" @click="sidebarCollapsed=!sidebarCollapsed" :title="sidebarCollapsed?'展开':'收起'">{{sidebarCollapsed?'☰':'✕'}}</button>
+        <h2>📊 考勤分析</h2>
+      </div>
+      <div style="padding:0 16px 8px"><span :class="['sidebar-role',user.role==='admin'?'r-admin':'r-user']">{{user.role==='admin'?'👑 管理员':'👤 用户'}}</span></div>
+      <nav class="sidebar-nav">
+        <div :class="['nav-item',activePage==='upload'&&'active']" @click="activePage='upload'"><span class="icon">📁</span><span class="nav-text">数据导入</span></div>
+        <div :class="['nav-item',activePage==='result'&&'active']" @click="activePage='result'"><span class="icon">📋</span><span class="nav-text">统计结果</span></div>
+        <div :class="['nav-item',activePage==='rules'&&'active']" @click="activePage='rules'"><span class="icon">⏰</span><span class="nav-text">考勤规则</span></div>
+        <div :class="['nav-item',activePage==='groups'&&'active']" @click="activePage='groups'"><span class="icon">🏷️</span><span class="nav-text">分组管理</span></div>
+        <div :class="['nav-item',activePage==='users'&&'active']" @click="activePage='users'"><span class="icon">👥</span><span class="nav-text">用户管理</span></div>
+        <div :class="['nav-item',activePage==='profile'&&'active']" @click="activePage='profile'"><span class="icon">⚙️</span><span class="nav-text">个人资料</span></div>
+      </nav>
+      <div class="sidebar-footer"><button class="btn-logout" @click="logout"><span>🚪 退出登录</span></button></div>
+    </aside>
+
+    <main class="main-content">
+      <!-- Upload -->
+      <div v-if="activePage==='upload'">
+        <div class="page-header"><h1>数据导入</h1><p>上传考勤记录表（.xls / .xlsx），系统自动解析统计</p></div>
+        <div class="card">
+          <div class="card-title">📤 上传考勤文件</div>
+          <div class="upload-zone" @click="$refs.fi.click()" @drop.prevent="handleDrop" @dragover.prevent>
+            <input ref="fi" type="file" accept=".xls,.xlsx" @change="handleFileSelect" style="display:none">
+            <div class="icon">📂</div><p v-if="!uploading">点击或拖拽 Excel 文件到此处</p><p v-else>正在解析中...</p>
+          </div>
+          <div v-if="uploading" class="progress-bar"><div class="fill" :style="{width:uploadProgress+'%'}"></div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📋 当前考勤规则</div>
+          <div style="margin-bottom:8px"><span v-for="(p,i) in rules.time_periods" :key="i" class="badge badge-info" style="margin-right:8px">{{p.start}} - {{p.end}}</span></div>
+          <div style="font-size:13px;color:var(--text-muted)">每日最低打卡：<strong style="color:var(--text-primary)">{{rules.min_punch_per_day}} 次</strong></div>
+        </div>
+      </div>
+
+      <!-- Result -->
+      <div v-if="activePage==='result'">
+        <div class="page-header"><h1>统计结果</h1><p>{{resultData?'共 '+resultData.records.length+' 名员工，周期 '+resultData.total_days+' 天':'请先导入考勤数据'}}</p></div>
+        <template v-if="resultData">
+          <div class="stats-grid">
+            <div class="stat-card"><div class="label">总人数</div><div class="value c-accent">{{resultData.records.length}}</div></div>
+            <div class="stat-card"><div class="label">全勤</div><div class="value c-success">{{resultData.records.filter(r=>!r.absent_days&&!r.abnormal_days).length}}</div></div>
+            <div class="stat-card"><div class="label">异常</div><div class="value c-warning">{{resultData.records.filter(r=>r.abnormal_days>0).length}}</div></div>
+            <div class="stat-card"><div class="label">缺勤</div><div class="value c-danger">{{resultData.records.filter(r=>r.absent_days>0).length}}</div></div>
+          </div>
+          <!-- 可视化图表 -->
+          <div class="charts-grid">
+            <div class="chart-card">
+              <h3>📈 出勤率TOP10</h3>
+              <canvas id="chartTop10"></canvas>
+            </div>
+            <div class="chart-card">
+              <h3>📅 每日打卡趋势</h3>
+              <canvas id="chartDaily"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <div class="toolbar">
+              <div class="search-wrap"><input class="search-input" v-model="searchQuery" placeholder="搜索工号、姓名或部门..."></div>
+              <select v-model="exportGroupId" style="padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none">
+                <option :value="null">全部导出</option><option v-for="g in groupsList" :key="g.id" :value="g.id">{{g.name}} ({{g.member_count}}人)</option>
+              </select>
+              <button class="btn btn-success btn-sm" @click="exportExcel">📥 导出 Excel</button>
+              <button class="btn btn-secondary btn-sm" @click="showMerge=true">🔗 结果汇总</button>
+            </div>
+            <div class="table-wrapper">
+              <table>
+                <thead><tr>
+                  <th style="width:32px"></th>
+                  <th @click="sortBy('emp_id')">工号<span class="sa">{{sortIcon('emp_id')}}</span></th>
+                  <th @click="sortBy('name')">姓名<span class="sa">{{sortIcon('name')}}</span></th>
+                  <th @click="sortBy('dept')">部门<span class="sa">{{sortIcon('dept')}}</span></th>
+                  <th>分组</th>
+                  <th @click="sortBy('attendance_days')">出勤<span class="sa">{{sortIcon('attendance_days')}}</span></th>
+                  <th @click="sortBy('absent_days')">缺勤<span class="sa">{{sortIcon('absent_days')}}</span></th>
+                  <th @click="sortBy('abnormal_days')">异常<span class="sa">{{sortIcon('abnormal_days')}}</span></th>
+                  <th>出勤率</th>
+                  <th>状态</th>
+                </tr></thead>
+                <tbody>
+                  <template v-for="r in paged" :key="r.emp_id">
+                    <tr @click="toggle(r.emp_id)" style="cursor:pointer">
+                      <td style="text-align:center;font-size:11px;color:var(--text-muted)">{{expanded.has(r.emp_id)?'▼':'▶'}}</td>
+                      <td>{{r.emp_id}}</td><td>{{r.name}}</td><td>{{r.dept}}</td>
+                      <td><span v-for="g in (r.groups||[])" :key="g.id" class="badge badge-group">{{g.name}}</span><span v-if="!r.groups||!r.groups.length" style="color:var(--text-muted);font-size:12px">未分组</span></td>
+                      <td><span class="badge badge-success">{{r.attendance_days}}</span></td>
+                      <td><span :class="r.absent_days?'badge badge-danger':'badge badge-success'">{{r.absent_days}}</span></td>
+                      <td><span :class="r.abnormal_days?'badge badge-warning':'badge badge-success'">{{r.abnormal_days}}</span></td>
+                      <td style="min-width:110px">
+                        <div class="attend-bar"><div class="seg seg-g" :style="{width:(r.total_days?r.attendance_days/r.total_days*100:0)+'%'}"></div><div class="seg seg-y" :style="{width:(r.total_days?r.abnormal_days/r.total_days*100:0)+'%'}"></div><div class="seg seg-r" :style="{width:(r.total_days?r.absent_days/r.total_days*100:0)+'%'}"></div></div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">{{r.total_days?Math.round(r.attendance_days/r.total_days*100):0}}%</div>
+                      </td>
+                      <td>
+                        <span v-if="!r.absent_days&&!r.abnormal_days" class="badge badge-success">✅ 正常</span>
+                        <span v-else-if="r.absent_days>r.total_days/2" class="badge badge-danger">❌ 严重</span>
+                        <span v-else class="badge badge-warning">⚠️ 异常</span>
+                      </td>
+                    </tr>
+                    <tr v-if="expanded.has(r.emp_id)" class="expand-row">
+                      <td colspan="10">
+                        <div style="font-size:13px;font-weight:600;margin-bottom:10px">📅 每日出勤明细 — {{r.name}}（{{r.emp_id}}）</div>
+                        <div class="day-grid">
+                          <div v-for="d in r.daily_details" :key="d.day" :class="['day-cell',d.status]" :title="'第'+d.day+'天: '+(d.status==='normal'?'正常':d.status==='abnormal'?'异常':'缺勤')+' | '+d.periods.map(p=>p.label+': '+(p.earliest||'无')).join(' | ')">
+                            <div class="dn">{{d.day}}</div>
+                            <div class="dt">{{d.earliest||'—'}}</div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="!filtered.length" class="empty-state"><div class="icon">🔍</div><p>没有匹配的记录</p></div>
+            <div v-if="totalPages>1" class="pagination">
+              <div class="page-info">第 {{(page-1)*10+1}}-{{Math.min(page*10,filtered.length)}} 条，共 {{filtered.length}} 条</div>
+              <div class="page-btns">
+                <button class="page-btn" :disabled="page<=1" @click="page=1">首页</button>
+                <button class="page-btn" :disabled="page<=1" @click="page--">‹</button>
+                <button v-for="p in visPages" :key="p" :class="['page-btn',p===page&&'active']" @click="page=p">{{p}}</button>
+                <button class="page-btn" :disabled="page>=totalPages" @click="page++">›</button>
+                <button class="page-btn" :disabled="page>=totalPages" @click="page=totalPages">末页</button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div v-else class="card"><div class="empty-state"><div class="icon">📭</div><p>暂无数据，请先上传考勤文件</p></div></div>
+      </div>
+
+      <!-- Rules -->
+      <div v-if="activePage==='rules'">
+        <div class="page-header"><h1>考勤规则配置 <span v-if="!canEdit('edit_rules')" class="readonly-tag">👁 仅查看</span></h1><p>设定有效打卡时间段和每日最低打卡次数</p></div>
+        <div class="card">
+          <div class="card-title">⏰ 打卡时间段</div>
+          <div v-for="(p,i) in rulesForm.time_periods" :key="i" class="time-period-row">
+            <span class="label">时段 {{i+1}}</span>
+            <input type="time" v-model="p.start" :disabled="!canEdit('edit_rules')">
+            <span class="label">至</span>
+            <input type="time" v-model="p.end" :disabled="!canEdit('edit_rules')">
+            <button v-if="canEdit('edit_rules')" class="btn-icon" @click="rmPeriod(i)" style="color:var(--danger);border-color:var(--danger)">✕</button>
+          </div>
+          <button v-if="canEdit('edit_rules')" class="btn btn-secondary btn-sm" @click="addPeriod" style="margin-top:8px">➕ 添加时间段</button>
+        </div>
+        <div class="card">
+          <div class="card-title">📊 打卡次数</div>
+          <div class="form-group" style="max-width:300px">
+            <label>每日最低打卡次数</label>
+            <select v-model.number="rulesForm.min_punch_per_day" :disabled="!canEdit('edit_rules')"><option :value="1">1次</option><option :value="2">2次</option><option :value="3">3次</option><option :value="4">4次</option></select>
+          </div>
+          <button v-if="canEdit('edit_rules')" class="btn btn-primary" style="width:auto" @click="saveRules">💾 保存规则</button>
+        </div>
+      </div>
+
+      <!-- Groups -->
+      <div v-if="activePage==='groups'">
+        <div class="page-header"><h1>分组管理 <span v-if="!canEdit('edit_groups')" class="readonly-tag">👁 仅查看</span></h1><p>按区域/教室划分人员，支持按分组导出</p></div>
+        <div v-if="canEdit('edit_groups')" class="card">
+          <div class="card-title">🏷️ 创建新分组</div>
+          <div style="display:flex;gap:12px">
+            <input v-model="newGroupName" placeholder="输入分组名称（如：明德楼A131）" style="flex:1;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;outline:none">
+            <button class="btn btn-primary" style="width:auto" @click="createGroup">创建</button>
+          </div>
+        </div>
+        <div v-if="canEdit('edit_groups') && resultData" class="card">
+          <div class="card-title">📋 批量分配</div>
+          <div style="display:flex;gap:12px;align-items:center">
+            <select v-model="assignGroupId" style="padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;outline:none;min-width:200px">
+              <option value="">选择目标分组</option><option v-for="g in groupsList" :key="g.id" :value="g.id">{{g.name}}</option>
+            </select>
+            <button class="btn btn-success btn-sm" @click="showAssign=true" :disabled="!assignGroupId">批量分配人员</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">📦 已有分组 ({{groupsList.length}})</div>
+          <div v-if="!groupsList.length" class="empty-state" style="padding:32px"><p>暂无分组</p></div>
+          <div v-for="g in groupsList" :key="g.id" class="group-card">
+            <div class="info"><div style="font-size:28px">🏫</div><div><div class="name">{{g.name}}</div><div class="count">{{g.member_count}} 人</div></div></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary btn-xs" @click="viewMembers(g)">查看成员</button>
+              <button v-if="canEdit('edit_groups')" class="btn btn-danger btn-xs" @click="deleteGroup(g)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+<!-- Users -->
+<div v-if="activePage==='users'">
+  <div class="page-header"><h1>用户管理 <span v-if="!canEdit('manage_users')" class="readonly-tag">👁 仅查看</span></h1><p>查看注册用户{{canEdit('manage_users')?'，管理权限':''}}</p></div>
+  <div class="card">
+    <div class="card-title">👥 注册用户 ({{usersList.length}})</div>
+    <ul class="user-list">
+      <li v-for="u in usersList" :key="u.id" class="user-item">
+        <div class="user-info">
+          <div class="user-avatar"><img v-if="u.avatar" :src="u.avatar"><span v-else>{{(u.nickname||u.username).charAt(0).toUpperCase()}}</span></div>
+          <div>
+            <div class="user-name">{{u.nickname||u.username}} <span v-if="u.role==='admin'" class="badge badge-info" style="font-size:10px">管理员</span></div>
+            <div class="user-meta">@{{u.username}} · {{u.created_at||'—'}}</div>
+            <div v-if="u.role!=='admin'" style="margin-top:4px">
+              <span v-if="u.permissions?.edit_rules" class="badge badge-success" style="font-size:10px">编辑规则</span>
+              <span v-if="u.permissions?.edit_groups" class="badge badge-success" style="font-size:10px">管理分组</span>
+              <span v-if="u.permissions?.manage_users" class="badge badge-success" style="font-size:10px">管理用户</span>
+              <span v-if="!u.permissions?.edit_rules&&!u.permissions?.edit_groups&&!u.permissions?.manage_users" style="font-size:11px;color:var(--text-muted)">无特殊权限</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button v-if="canEdit('manage_users') && u.role!=='admin'" class="btn btn-secondary btn-xs" @click="openPerm(u)">⚙️ 权限</button>
+          <!-- ✅ 新增删除按钮 -->
+          <button v-if="canEdit('manage_users') && u.role!=='admin'" class="btn btn-danger btn-xs" @click="deleteUser(u.id)">🗑️ 删除</button>
+        </div>
+      </li>
+    </ul>
+  </div>
+</div>
+
+      <!-- Profile -->
+      <div v-if="activePage==='profile'">
+        <div class="page-header"><h1>个人资料</h1><p>管理账户信息</p></div>
+        <div class="card" style="max-width:480px">
+          <div class="card-title">🖼️ 头像</div>
+          <div class="profile-avatar" @click="$refs.avInput.click()">
+            <img v-if="user.avatar" :src="user.avatar"><span v-else>{{(user.nickname||user.username).charAt(0).toUpperCase()}}</span>
+            <div class="overlay">📷 更换</div>
+            <input ref="avInput" type="file" accept="image/*" @change="handleAvatar" style="display:none">
+          </div>
+          <div class="form-hint" style="text-align:center;margin-bottom:20px">点击头像上传</div>
+        </div>
+        <div class="card" style="max-width:480px">
+          <div class="card-title">✏️ 基本信息</div>
+          <div class="form-group"><label>用户名</label><input :value="user.username" disabled style="opacity:.5"></div>
+          <div class="form-group"><label>昵称</label><input v-model="profileForm.nickname" placeholder="输入昵称"></div>
+          <button class="btn btn-primary" style="width:auto" @click="saveProfile">💾 保存</button>
+        </div>
+        <div class="card" style="max-width:480px">
+          <div class="card-title">🔒 修改密码</div>
+          <div class="form-group"><label>当前密码</label><input v-model="pwForm.old_password" type="password" placeholder="输入当前密码"></div>
+          <div class="form-group"><label>新密码</label><input v-model="pwForm.new_password" type="password" placeholder="至少4字符"></div>
+          <div class="form-group"><label>确认新密码</label><input v-model="pwForm.confirm" type="password" placeholder="再次输入"></div>
+          <button class="btn btn-primary" style="width:auto" @click="changePassword">🔒 修改密码</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Assign Modal -->
+  <div v-if="showAssign" class="modal-overlay" @click.self="showAssign=false">
+    <div class="modal">
+      <h3>分配到 {{(groupsList.find(g=>g.id==assignGroupId)||{}).name}}</h3>
+      <div class="select-all" @click="toggleAll">{{allSel?'取消全选':'全选'}}</div>
+      <div class="checkbox-list">
+        <label v-for="r in (resultData&&resultData.records||[])" :key="r.emp_id" class="checkbox-item">
+          <input type="checkbox" :value="r.emp_id" v-model="selIds"><span>{{r.emp_id}} - {{r.name}} ({{r.dept}})</span>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" @click="showAssign=false">取消</button>
+        <button class="btn btn-success btn-sm" @click="doAssign">确认 ({{selIds.length}}人)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Members Modal -->
+  <div v-if="showMembers" class="modal-overlay" @click.self="showMembers=false">
+    <div class="modal">
+      <h3>{{viewGroup?viewGroup.name:''}} — 成员</h3>
+      <div v-if="!viewMems.length" class="empty-state" style="padding:24px"><p>暂无成员</p></div>
+      <div v-else>
+        <div v-for="eid in viewMems" :key="eid" style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+          <span>{{eid}} — {{empName(eid)}}</span>
+          <button v-if="canEdit('edit_groups')" class="btn btn-danger btn-xs" @click="rmFromGroup(eid,viewGroup.id)">移除</button>
+        </div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary btn-sm" @click="showMembers=false">关闭</button></div>
+    </div>
+  </div>
+
+  <!-- Permission Modal -->
+  <div v-if="showPerm" class="modal-overlay" @click.self="showPerm=false">
+    <div class="modal">
+      <h3>权限管理 — {{permUser?(permUser.nickname||permUser.username):''}}</h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">勾选后该用户获得对应操作权限</p>
+      <div class="perm-grid">
+        <div class="perm-item"><input type="checkbox" id="pr" v-model="permRules"><label for="pr">编辑规则</label></div>
+        <div class="perm-item"><input type="checkbox" id="pg" v-model="permGroups"><label for="pg">管理分组</label></div>
+        <div class="perm-item"><input type="checkbox" id="pu" v-model="permUsers"><label for="pu">管理用户</label></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" @click="showPerm=false">取消</button>
+        <button class="btn btn-success btn-sm" @click="savePerm">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Merge Modal -->
+  <div v-if="showMerge" class="modal-overlay" @click.self="showMerge=false">
+    <div class="modal" style="width:600px">
+      <h3>🔗 结果汇总 — 合并分组数据</h3>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">上传不同分组导出的 Excel 文件，系统自动合并为全体考勤汇总表</p>
+      <div class="upload-zone" style="padding:32px;margin-bottom:16px" @click="$refs.mergeFi.click()" @drop.prevent="handleMergeDrop" @dragover.prevent>
+        <input ref="mergeFi" type="file" accept=".xlsx" multiple @change="handleMergeFileSelect" style="display:none">
+        <div class="icon" style="font-size:36px">📂</div>
+        <p>点击或拖拽多个 Excel 文件到此处</p>
+      </div>
+      <div v-if="mergeFiles.length" style="margin-bottom:16px">
+        <div v-for="(f,i) in mergeFiles" :key="i" class="merge-chip" style="margin:4px">
+          {{f.name}}
+          <span class="remove" @click="mergeFiles.splice(i,1)">✕</span>
+        </div>
+      </div>
+      <div v-if="mergeLoading" style="text-align:center;padding:16px"><span class="spinner"></span> 合并中...</div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" @click="showMerge=false">取消</button>
+        <button class="btn btn-primary btn-sm" @click="doMergeExport" :disabled="!mergeFiles.length||mergeLoading">合并导出 ({{mergeFiles.length}}个文件)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const{createApp,ref,computed,onMounted,watch,nextTick}=Vue;
+createApp({
+  setup(){
+    const token=ref(localStorage.getItem('at_token')||'');
+    const user=ref(null);
+    const activePage=ref('upload');
+    const sidebarCollapsed=ref(false);
+    const isRegister=ref(false);
+    const loginError=ref('');
+    const loginLoading=ref(false);
+    const loginForm=ref({username:'',password:''});
+    const rules=ref({time_periods:[{start:'08:00',end:'12:00'},{start:'13:00',end:'18:00'}],min_punch_per_day:2});
+    const rulesForm=ref({time_periods:[],min_punch_per_day:2});
+    const uploading=ref(false);
+    const uploadProgress=ref(0);
+    const resultData=ref(null);
+    const searchQuery=ref('');
+    const sortKey=ref('');
+    const sortDir=ref('asc');
+    const usersList=ref([]);
+    const groupsList=ref([]);
+    const toast=ref({show:false,message:'',type:'success'});
+    const exportGroupId=ref(null);
+    const newGroupName=ref('');
+    const assignGroupId=ref('');
+    const showAssign=ref(false);
+    const selIds=ref([]);
+    const showMembers=ref(false);
+    const viewGroup=ref(null);
+    const viewMems=ref([]);
+    const profileForm=ref({nickname:''});
+    const pwForm=ref({old_password:'',new_password:'',confirm:''});
+    const expanded=ref(new Set());
+    const page=ref(1);
+    const showPerm=ref(false);
+    const permUser=ref(null);
+    const permRules=ref(false);
+    const permGroups=ref(false);
+    const permUsers=ref(false);
+    const showMerge=ref(false);
+    const mergeFiles=ref([]);
+    const mergeLoading=ref(false);
+    let chartInstances={};
+
+    function canEdit(perm){if(!user.value)return false;if(user.value.role==='admin')return true;return user.value.permissions&&user.value.permissions[perm]?true:false}
+    function showToast(m,t='success'){toast.value={show:true,message:m,type:t};setTimeout(()=>toast.value.show=false,3000)}
+    function copyRules(){rulesForm.value={time_periods:rules.value.time_periods.map(p=>({...p})),min_punch_per_day:rules.value.min_punch_per_day}}
+
+    async function api(path,opt={}){
+      const h={...opt.headers};
+      if(token.value)h['Authorization']='Bearer '+token.value;
+      if(opt.body&&typeof opt.body==='object'&&!(opt.body instanceof FormData)){h['Content-Type']='application/json';opt.body=JSON.stringify(opt.body)}
+      const r=await fetch(path,{...opt,headers:h});
+      if(!r.ok){const e=await r.json().catch(()=>({detail:'请求失败'}));throw new Error(e.detail||'请求失败')}
+      return r;
+    }
+
+    async function handleLogin(){
+      loginError.value='';loginLoading.value=true;
+      try{const ep=isRegister.value?'/api/register':'/api/login';const d=await(await api(ep,{method:'POST',body:loginForm.value})).json();
+        token.value=d.token;user.value=d.user;localStorage.setItem('at_token',d.token);profileForm.value.nickname=user.value.nickname||user.value.username;
+        await loadRules();await loadGroups();showToast(isRegister.value?'注册成功！':'登录成功！')}
+      catch(e){loginError.value=e.message}finally{loginLoading.value=false}
+    }
+    async function checkAuth(){if(!token.value)return;try{user.value=await(await api('/api/me')).json();profileForm.value.nickname=user.value.nickname||user.value.username;await loadRules();await loadGroups()}catch{token.value='';localStorage.removeItem('at_token')}}
+    function logout(){token.value='';user.value=null;localStorage.removeItem('at_token');resultData.value=null}
+
+    async function loadRules(){try{rules.value=await(await api('/api/rules')).json();copyRules()}catch{}}
+    async function saveRules(){try{await api('/api/rules',{method:'PUT',body:rulesForm.value});rules.value=JSON.parse(JSON.stringify(rulesForm.value));showToast('规则已保存！')}catch(e){showToast(e.message,'error')}}
+    function addPeriod(){rulesForm.value.time_periods.push({start:'08:00',end:'12:00'})}
+    function rmPeriod(i){if(rulesForm.value.time_periods.length>1)rulesForm.value.time_periods.splice(i,1);else showToast('至少保留一个时间段','error')}
+
+    async function loadGroups(){try{groupsList.value=await(await api('/api/groups')).json()}catch{}}
+    async function createGroup(){if(!newGroupName.value.trim()){showToast('请输入名称','error');return}try{await api('/api/groups',{method:'POST',body:{name:newGroupName.value.trim()}});newGroupName.value='';await loadGroups();showToast('创建成功！')}catch(e){showToast(e.message,'error')}}
+    async function deleteGroup(g){if(!confirm('确定删除"'+g.name+'"？'))return;try{await api('/api/groups/'+g.id,{method:'DELETE'});await loadGroups();showToast('已删除')}catch(e){showToast(e.message,'error')}}
+    async function doAssign(){if(!selIds.value.length){showToast('请勾选','error');return}try{const d=await(await api('/api/groups/assign',{method:'POST',body:{emp_ids:selIds.value,group_id:parseInt(assignGroupId.value)}})).json();showAssign.value=false;selIds.value=[];await loadGroups();showToast(d.message)}catch(e){showToast(e.message,'error')}}
+    const allSel=computed(()=>resultData.value&&selIds.value.length===resultData.value.records.length);
+    function toggleAll(){allSel.value?selIds.value=[]:selIds.value=(resultData.value?.records||[]).map(r=>r.emp_id)}
+    async function viewMembers(g){viewGroup.value=g;try{viewMems.value=await(await api('/api/groups/'+g.id+'/members')).json();showMembers.value=true}catch(e){showToast(e.message,'error')}}
+    function empName(eid){const r=(resultData.value?.records||[]).find(r=>r.emp_id===eid);return r?r.name:'未知'}
+    async function rmFromGroup(eid,gid){try{await api('/api/groups/remove',{method:'POST',body:{emp_id:eid,group_id:gid}});viewMems.value=viewMems.value.filter(e=>e!==eid);await loadGroups();showToast('已移除')}catch(e){showToast(e.message,'error')}}
+
+    function openPerm(u){permUser.value=u;permRules.value=!!(u.permissions&&u.permissions.edit_rules);permGroups.value=!!(u.permissions&&u.permissions.edit_groups);permUsers.value=!!(u.permissions&&u.permissions.manage_users);showPerm.value=true}
+    async function savePerm(){try{await api('/api/users/'+permUser.value.id+'/permissions',{method:'PUT',body:{permissions:{edit_rules:permRules.value,edit_groups:permGroups.value,manage_users:permUsers.value}}});showPerm.value=false;await loadUsers();showToast('权限已更新')}catch(e){showToast(e.message,'error')}}
+    async function deleteUser(uid) {
+  if (!confirm('确定要删除该用户吗？此操作不可撤销！')) return;
+  try {
+    await api('/api/users/' + uid, { method: 'DELETE' });
+    await loadUsers(); // 刷新用户列表
+    showToast('用户已删除');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+    async function loadUsers(){try{usersList.value=await(await api('/api/users')).json()}catch{}}
+
+    async function handleFileUpload(f){
+      if(!f)return;const ext=f.name.split('.').pop().toLowerCase();
+      if(!['xls','xlsx'].includes(ext)){showToast('仅支持 .xls/.xlsx','error');return}
+      uploading.value=true;uploadProgress.value=20;const fd=new FormData();fd.append('file',f);
+      try{uploadProgress.value=50;resultData.value=await(await api('/api/upload',{method:'POST',body:fd})).json();uploadProgress.value=100;
+        showToast('解析完成！'+resultData.value.records.length+' 名员工');activePage.value='result';page.value=1;expanded.value=new Set()}
+      catch(e){showToast(e.message,'error')}finally{setTimeout(()=>{uploading.value=false;uploadProgress.value=0},500)}
+    }
+    function handleFileSelect(e){handleFileUpload(e.target.files[0]);e.target.value=''}
+    function handleDrop(e){handleFileUpload(e.dataTransfer.files[0])}
+
+    async function exportExcel(){if(!resultData.value)return;try{const r=await api('/api/export',{method:'POST',body:{records:resultData.value.records,group_id:exportGroupId.value,include_detail:true}});
+      const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='考勤统计_'+new Date().toISOString().slice(0,10)+'.xlsx';a.click();URL.revokeObjectURL(u);showToast('导出成功！')}catch(e){showToast(e.message,'error')}}
+
+    const filtered=computed(()=>{if(!resultData.value)return[];let rs=[...resultData.value.records];const q=searchQuery.value.toLowerCase().trim();
+      if(q)rs=rs.filter(r=>r.emp_id.toLowerCase().includes(q)||r.name.toLowerCase().includes(q)||r.dept.toLowerCase().includes(q));
+      if(sortKey.value)rs.sort((a,b)=>{let va=a[sortKey.value],vb=b[sortKey.value];if(sortKey.value==='emp_id'){const na=parseFloat(va),nb=parseFloat(vb);if(!isNaN(na)&&!isNaN(nb))return sortDir.value==='asc'?na-nb:nb-na}if(typeof va==='string')return sortDir.value==='asc'?va.localeCompare(vb):vb.localeCompare(va);return sortDir.value==='asc'?va-vb:vb-va});return rs});
+    const totalPages=computed(()=>Math.ceil(filtered.value.length/10));
+    const paged=computed(()=>{const s=(page.value-1)*10;return filtered.value.slice(s,s+10)});
+    const visPages=computed(()=>{const tp=totalPages.value,cp=page.value,ps=[];let st=Math.max(1,cp-2),en=Math.min(tp,cp+2);if(en-st<4){if(st===1)en=Math.min(tp,5);else st=Math.max(1,en-4)}for(let i=st;i<=en;i++)ps.push(i);return ps});
+    watch(filtered,()=>{page.value=1});
+    function sortBy(k){if(sortKey.value===k){sortDir.value=sortDir.value==='asc'?'desc':'asc'}else{sortKey.value=k;sortDir.value='asc'}}
+    function sortIcon(k){if(sortKey.value!==k)return'↕';return sortDir.value==='asc'?'↑':'↓'}
+    function toggle(eid){const s=new Set(expanded.value);s.has(eid)?s.delete(eid):s.add(eid);expanded.value=s}
+
+    async function saveProfile(){try{user.value=await(await api('/api/profile',{method:'PUT',body:{nickname:profileForm.value.nickname}})).json();showToast('已更新')}catch(e){showToast(e.message,'error')}}
+    async function changePassword(){if(pwForm.value.new_password!==pwForm.value.confirm){showToast('两次密码不一致','error');return}
+      try{await api('/api/password',{method:'PUT',body:{old_password:pwForm.value.old_password,new_password:pwForm.value.new_password}});pwForm.value={old_password:'',new_password:'',confirm:''};showToast('密码已修改')}catch(e){showToast(e.message,'error')}}
+    function handleAvatar(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=async ev=>{try{user.value=await(await api('/api/profile',{method:'PUT',body:{avatar:ev.target.result}})).json();showToast('头像已更新')}catch(e){showToast(e.message,'error')}};rd.readAsDataURL(f);e.target.value=''}
+
+    // ── 可视化图表 ──
+    function renderCharts(){
+      if(!resultData.value)return;
+      const records=resultData.value.records;
+      Object.values(chartInstances).forEach(c=>c.destroy());chartInstances={};
+
+      // 1. 出勤率TOP10
+      const validRecords=records.filter(r=>r.total_days>0);
+      const top10=[...validRecords].sort((a,b)=>(b.attendance_days/b.total_days)-(a.attendance_days/a.total_days)).slice(0,10);
+      const ctx2=document.getElementById('chartTop10');
+      if(ctx2&&top10.length)chartInstances.top10=new Chart(ctx2,{type:'bar',data:{labels:top10.map(r=>r.name),datasets:[{label:'出勤率 %',data:top10.map(r=>Math.round(r.attendance_days/r.total_days*100)),backgroundColor:'#6366f1',borderRadius:4}]},options:{responsive:true,indexAxis:'y',scales:{x:{max:100,ticks:{color:'#9ca3af'},grid:{color:'#2d3244'}},y:{ticks:{color:'#9ca3af'},grid:{display:false}}},plugins:{legend:{display:false}}}});
+
+      // 2. 每日打卡趋势
+      const allDays=new Set();
+      records.forEach(r=>{(r.daily_details||[]).forEach(d=>allDays.add(d.day));});
+      const days=[...allDays].sort((a,b)=>a-b);
+      if(days.length){
+        const dailyNormal=days.map(d=>records.filter(r=>{const dd=(r.daily_details||[]).find(x=>x.day===d);return dd&&dd.status==='normal'}).length);
+        const dailyAbnormal=days.map(d=>records.filter(r=>{const dd=(r.daily_details||[]).find(x=>x.day===d);return dd&&dd.status==='abnormal'}).length);
+        const dailyAbsent=days.map(d=>records.filter(r=>{const dd=(r.daily_details||[]).find(x=>x.day===d);return dd&&dd.status==='absent'}).length);
+        const ctx4=document.getElementById('chartDaily');
+        if(ctx4)chartInstances.daily=new Chart(ctx4,{type:'line',data:{labels:days.map(d=>'第'+d+'天'),datasets:[{label:'正常',data:dailyNormal,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',fill:true,tension:.3},{label:'异常',data:dailyAbnormal,borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,.1)',fill:true,tension:.3},{label:'缺勤',data:dailyAbsent,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.1)',fill:true,tension:.3}]},options:{responsive:true,scales:{x:{ticks:{color:'#9ca3af'},grid:{color:'#2d3244'}},y:{ticks:{color:'#9ca3af'},grid:{color:'#2d3244'}}},plugins:{legend:{position:'bottom',labels:{color:'#9ca3af',font:{size:12}}}}}});
+      }
+    }
+
+    // ── 结果汇总（文件合并）──
+    function handleMergeFileSelect(e){
+      const newFiles=Array.from(e.target.files).filter(f=>f.name.endsWith('.xlsx'));
+      mergeFiles.value.push(...newFiles);e.target.value='';
+    }
+    function handleMergeDrop(e){
+      const newFiles=Array.from(e.dataTransfer.files).filter(f=>f.name.endsWith('.xlsx'));
+      mergeFiles.value.push(...newFiles);
+    }
+    async function doMergeExport(){
+      if(!mergeFiles.value.length)return;
+      mergeLoading.value=true;
+      try{
+        const fd=new FormData();
+        mergeFiles.value.forEach(f=>fd.append('files',f));
+        const r=await api('/api/merge-export',{method:'POST',body:fd});
+        const b=await r.blob();const u=URL.createObjectURL(b);
+        const a=document.createElement('a');a.href=u;a.download='考勤汇总_全体_'+new Date().toISOString().slice(0,10)+'.xlsx';a.click();
+        URL.revokeObjectURL(u);showMerge.value=false;mergeFiles.value=[];showToast('合并导出成功！');
+      }catch(e){showToast(e.message,'error')}finally{mergeLoading.value=false}
+    }
+
+    watch(activePage,p=>{
+      if(p==='users')loadUsers();
+      if(p==='rules')copyRules();
+      if(p==='result')nextTick(()=>renderCharts());
+    });
+    watch(resultData,()=>{nextTick(()=>renderCharts())});
+    onMounted(()=>checkAuth());
+
+    return{token,user,activePage,sidebarCollapsed,isRegister,loginError,loginLoading,loginForm,
+      rules,rulesForm,uploading,uploadProgress,resultData,searchQuery,sortKey,sortDir,
+      usersList,groupsList,toast,filtered,paged,totalPages,visPages,page,expanded,
+      exportGroupId,newGroupName,assignGroupId,showAssign,selIds,allSel,
+      showMembers,viewGroup,viewMems,profileForm,pwForm,showPerm,permUser,permRules,permGroups,permUsers,
+      showMerge,mergeFiles,mergeLoading,
+      canEdit,handleLogin,logout,saveRules,addPeriod,rmPeriod,
+      createGroup,deleteGroup,doAssign,toggleAll,viewMembers,empName,rmFromGroup,
+      openPerm,deleteUser,savePerm,handleFileSelect,handleDrop,exportExcel,sortBy,sortIcon,toggle,
+      showToast,saveProfile,changePassword,handleAvatar,handleMergeFileSelect,handleMergeDrop,doMergeExport,renderCharts};
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
