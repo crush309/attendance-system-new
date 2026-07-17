@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from jose import jwt, JWTError
 from io import BytesIO
+from openpyxl.utils import get_column_letter  # ✅ 新增导入
 
 from database import (
     init_db, create_user, authenticate_user, get_user_by_id,
@@ -316,8 +317,9 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
             cell = ws.cell(row=i, column=col, value=v)
             cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
+    # ✅ 使用 get_column_letter 替换 chr(64+col)
     for col in range(1, len(headers) + 1):
-        ws.column_dimensions[chr(64 + col)].width = 16
+        ws.column_dimensions[get_column_letter(col)].width = 16
 
     # ── Sheet 2: Daily Detail ──
     if include_detail and records and records[0].get("daily_details"):
@@ -363,10 +365,13 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
             row_idx += 1
 
-        ws2.column_dimensions['A'].width = 10; ws2.column_dimensions['B'].width = 10
-        ws2.column_dimensions['C'].width = 10; ws2.column_dimensions['D'].width = 10
+        # ✅ 使用 get_column_letter
+        ws2.column_dimensions[get_column_letter(1)].width = 10   # A
+        ws2.column_dimensions[get_column_letter(2)].width = 10   # B
+        ws2.column_dimensions[get_column_letter(3)].width = 10   # C
+        ws2.column_dimensions[get_column_letter(4)].width = 10   # D
         for ci in range(len(period_headers)):
-            ws2.column_dimensions[chr(69 + ci)].width = 18
+            ws2.column_dimensions[get_column_letter(5 + ci)].width = 18  # 从E列开始
 
         # ── Sheet 3: 透视表（一人一行） ──
         ws3 = wb.create_sheet(f"考勤透视{sheet_suffix}")
@@ -439,12 +444,12 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                     cell.alignment = Alignment(horizontal="center")
                     cell.border = thin_border
 
-        # 列宽
-        ws3.column_dimensions['A'].width = 10
-        ws3.column_dimensions['B'].width = 10
-        ws3.column_dimensions['C'].width = 10
+        # ✅ 使用 get_column_letter 设置列宽
+        ws3.column_dimensions[get_column_letter(1)].width = 10
+        ws3.column_dimensions[get_column_letter(2)].width = 10
+        ws3.column_dimensions[get_column_letter(3)].width = 10
         for ci in range(num_days * num_periods):
-            ws3.column_dimensions[chr(68 + ci) if ci < 23 else 'A' + chr(65 + ci - 23)].width = 8
+            ws3.column_dimensions[get_column_letter(4 + ci)].width = 8   # 从D列开始
 
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
@@ -563,8 +568,9 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
             cell = ws.cell(row=i, column=col, value=v)
             cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
+    # ✅ 使用 get_column_letter
     for col in range(1, len(headers) + 1):
-        ws.column_dimensions[chr(64 + col)].width = 16
+        ws.column_dimensions[get_column_letter(col)].width = 16
 
     # ── Sheet 2: 考勤明细汇总 ──
     if all_details and detail_header:
@@ -591,11 +597,13 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                 cell = ws2.cell(row=i, column=col + 1, value=v)
                 cell.font = cell_font; cell.alignment = Alignment(horizontal="center")
                 cell.border = thin_border
-        # 设置列宽
-        ws2.column_dimensions['A'].width = 10; ws2.column_dimensions['B'].width = 10
-        ws2.column_dimensions['C'].width = 10; ws2.column_dimensions['D'].width = 10
+        # ✅ 使用 get_column_letter 设置列宽
+        ws2.column_dimensions[get_column_letter(1)].width = 10   # A
+        ws2.column_dimensions[get_column_letter(2)].width = 10   # B
+        ws2.column_dimensions[get_column_letter(3)].width = 10   # C
+        ws2.column_dimensions[get_column_letter(4)].width = 10   # D
         for ci in range(max(0, num_cols - 7)):
-            ws2.column_dimensions[chr(69 + ci)].width = 18
+            ws2.column_dimensions[get_column_letter(5 + ci)].width = 18  # 从E列开始
 
     buf = BytesIO()
     wb_out.save(buf); buf.seek(0)
