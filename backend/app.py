@@ -317,7 +317,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
             cell = ws.cell(row=i, column=col, value=v)
             cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
-    # 设置列宽
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(col)].width = 16
 
@@ -335,7 +334,7 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         status_map = {"normal": "正常", "abnormal": "异常", "absent": "缺勤"}
         num_periods = len(periods)
         row_idx = 2
-        total_punch_col = 4 + num_periods + 2  # 有效打卡次数列号
+        total_punch_col = 4 + num_periods + 2
         for rec in records:
             rec_total = 0
             for detail in rec.get("daily_details", []):
@@ -355,7 +354,7 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                     cell = ws2.cell(row=row_idx, column=col, value=v)
                     cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
                 row_idx += 1
-            # 该员工汇总行
+            # 汇总行
             sum_fill = PatternFill(start_color="1F2937", end_color="1F2937", fill_type="solid")
             sum_font = Font(name="微软雅黑", bold=True, color="E5E7EB", size=11)
             sum_vals = [rec["emp_id"], rec["name"], rec["dept"], "汇总"] + [""] * num_periods + ["", rec_total]
@@ -365,7 +364,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
             row_idx += 1
 
-        # 设置列宽
         ws2.column_dimensions[get_column_letter(1)].width = 10
         ws2.column_dimensions[get_column_letter(2)].width = 10
         ws2.column_dimensions[get_column_letter(3)].width = 10
@@ -378,7 +376,7 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         num_days = records[0].get("total_days", 0) if records else 0
         num_periods = len(periods)
 
-        # 表头
+        # 表头第1行：合并日期
         ws3.cell(row=1, column=1, value="工号").fill = header_fill
         ws3.cell(row=1, column=1).font = header_font
         ws3.cell(row=1, column=1).alignment = Alignment(horizontal="center")
@@ -395,6 +393,7 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         ws3.cell(row=1, column=3).border = thin_border
         ws3.merge_cells(start_row=1, start_column=3, end_row=2, end_column=3)
 
+        # 日期和时段标题
         for d in range(num_days):
             start_col = 4 + d * num_periods
             end_col = start_col + num_periods - 1
@@ -407,12 +406,14 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 ws3.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
             for pi, p in enumerate(periods):
                 col = start_col + pi
-                ws3.cell(row=2, column=col, value=f"时段{pi+1}")
+                # ✅ 修改：时段标题显示具体时间
+                ws3.cell(row=2, column=col, value=f"时段{pi+1}({p['start']}-{p['end']})")
                 ws3.cell(row=2, column=col).fill = header_fill
                 ws3.cell(row=2, column=col).font = header_font
                 ws3.cell(row=2, column=col).alignment = Alignment(horizontal="center")
                 ws3.cell(row=2, column=col).border = thin_border
 
+        # 数据行
         for ri, rec in enumerate(records, 3):
             ws3.cell(row=ri, column=1, value=rec["emp_id"]).font = cell_font
             ws3.cell(row=ri, column=1).alignment = Alignment(horizontal="center")
@@ -439,17 +440,16 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                     cell.alignment = Alignment(horizontal="center")
                     cell.border = thin_border
 
-        # 设置列宽
+        # 列宽
         ws3.column_dimensions[get_column_letter(1)].width = 10
         ws3.column_dimensions[get_column_letter(2)].width = 10
         ws3.column_dimensions[get_column_letter(3)].width = 10
         for ci in range(num_days * num_periods):
             ws3.column_dimensions[get_column_letter(4 + ci)].width = 8
 
-    # ===== 终极防御：清空所有工作表的列宽设置（彻底删除非法键） =====
+    # ===== 终极防御：清空所有工作表的列宽设置 =====
     for sheet in wb.worksheets:
         sheet.column_dimensions.clear()
-    # ================================================================
 
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
@@ -472,6 +472,12 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
     detail_header = None
     total_days = 0
 
+    # 新增：用于合并透视表的数据
+    pivot_rows = []          # 存储所有数据行（从第3行开始）
+    pivot_header_row1 = None # 第一个文件的第1行（日期合并行）
+    pivot_header_row2 = None # 第一个文件的第2行（时段行）
+    pivot_num_cols = 0
+
     for f in files:
         content = await f.read()
         tmp_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}.xlsx")
@@ -479,7 +485,8 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
             tmp.write(content)
         try:
             wb = xl_load(tmp_path, data_only=True)
-            # 读取考勤统计 Sheet
+
+            # 1. 读取考勤统计 Sheet
             summary_sheet = None
             for name in wb.sheetnames:
                 if name.startswith("考勤统计"):
@@ -499,7 +506,8 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                         "abnormal_days": row[6] or 0,
                         "total_punches": row[7] or 0,
                     })
-            # 读取考勤明细 Sheet
+
+            # 2. 读取考勤明细 Sheet
             detail_sheet = None
             for name in wb.sheetnames:
                 if name.startswith("考勤明细"):
@@ -514,7 +522,6 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                     if not row[0]:
                         continue
                     row_data = list(row)
-                    # 跳过汇总行
                     if len(row_data) > 3 and row_data[3] and str(row_data[3]) == "汇总":
                         continue
                     if len(row_data) > 3 and row_data[3] and str(row_data[3]).startswith("第"):
@@ -522,12 +529,43 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                         if d > total_days:
                             total_days = d
                     all_details.append(row_data)
+
+            # 3. 新增：读取考勤透视 Sheet
+            pivot_sheet = None
+            for name in wb.sheetnames:
+                if name.startswith("考勤透视"):
+                    pivot_sheet = wb[name]
+                    break
+            if pivot_sheet:
+                # 读取前两行作为表头
+                row1 = [cell.value for cell in pivot_sheet[1]]
+                row2 = [cell.value for cell in pivot_sheet[2]]
+                if pivot_header_row1 is None:
+                    pivot_header_row1 = row1
+                    pivot_header_row2 = row2
+                    pivot_num_cols = len(row1)
+                else:
+                    # 如果表头不一致，取最大列数，缺失补空
+                    if len(row1) > pivot_num_cols:
+                        pivot_num_cols = len(row1)
+                        pivot_header_row1 = row1
+                        pivot_header_row2 = row2
+                # 读取数据行（从第3行开始）
+                for row in pivot_sheet.iter_rows(min_row=3, values_only=True):
+                    if not row[0]:
+                        continue
+                    # 确保列数一致，不足补空
+                    row_list = list(row)
+                    if len(row_list) < pivot_num_cols:
+                        row_list += [None] * (pivot_num_cols - len(row_list))
+                    pivot_rows.append(row_list)
+
         except Exception:
             pass
         finally:
             os.remove(tmp_path)
 
-    # 去重统计
+    # 去重统计（同之前）
     seen = {}
     for r in all_records:
         seen[r["emp_id"]] = r
@@ -600,10 +638,43 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         for ci in range(max(0, num_cols - 7)):
             ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
-    # ===== 终极防御：清空所有工作表的列宽设置 =====
+    # ── Sheet 3: 考勤透视汇总（新增） ──
+    if pivot_rows and pivot_header_row1 is not None:
+        ws3 = wb_out.create_sheet("考勤透视汇总")
+        # 写入表头第1行
+        for col_idx, val in enumerate(pivot_header_row1, 1):
+            if val:  # 只对有值的单元格设置样式
+                cell = ws3.cell(row=1, column=col_idx, value=val)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+        # 写入表头第2行
+        for col_idx, val in enumerate(pivot_header_row2, 1):
+            if val:
+                cell = ws3.cell(row=2, column=col_idx, value=val)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+        # 写入数据行（从第3行开始）
+        for i, row_data in enumerate(pivot_rows, 3):
+            for col_idx, val in enumerate(row_data, 1):
+                if col_idx <= pivot_num_cols:
+                    cell = ws3.cell(row=i, column=col_idx, value=val)
+                    cell.font = cell_font
+                    cell.alignment = Alignment(horizontal="center")
+                    cell.border = thin_border
+        # 设置列宽（参考原透视表，前3列固定宽度，其余自动宽度）
+        ws3.column_dimensions[get_column_letter(1)].width = 10
+        ws3.column_dimensions[get_column_letter(2)].width = 10
+        ws3.column_dimensions[get_column_letter(3)].width = 10
+        for ci in range(4, pivot_num_cols + 1):
+            ws3.column_dimensions[get_column_letter(ci)].width = 8
+
+    # ===== 清空所有列宽设置（防御） =====
     for sheet in wb_out.worksheets:
         sheet.column_dimensions.clear()
-    # ============================================
 
     buf = BytesIO()
     wb_out.save(buf); buf.seek(0)
