@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from jose import jwt, JWTError
 from io import BytesIO
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill
 import re
 
 from database import (
@@ -36,7 +37,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 # ── 辅助函数：格式化日期 ──
 def format_date(date_str: str) -> str:
-    """将 '2026-07-01' 转换为 '7月1日'，若格式不符则返回原字符串"""
     if not date_str:
         return ""
     match = re.match(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', date_str)
@@ -477,9 +477,10 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
 
     from openpyxl import Workbook, load_workbook as xl_load
 
-    # 获取考勤规则（用于计算应打卡次数）
+    # 获取考勤规则（用于每天时段数）
     rules = get_rules()
-    min_punch_per_day = rules.get("min_punch_per_day", 2)  # 默认2
+    min_punch_per_day = rules.get("min_punch_per_day", 2)
+    num_periods_per_day = len(rules.get("time_periods", []))
 
     all_records = []       # 用于统计汇总
     all_details = []       # 用于明细汇总
@@ -490,6 +491,7 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
     pivot_header_row1 = None   # 第一个文件的第1行（日期合并行）
     pivot_header_row2 = None   # 第一个文件的第2行（时段行）
     pivot_num_time_cols = 0    # 时段总列数
+    total_days = 0             # 从透视表表头提取的总天数
 
     for f in files:
         content = await f.read()
@@ -518,8 +520,6 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                         "absent_days": row[5] or 0,
                         "abnormal_days": row[6] or 0,
                         "total_punches": row[7] or 0,
-                        # 提取 total_days（如果有）
-                        "total_days": int(row[8]) if len(row) > 8 and row[8] else 0,
                     })
 
             # 2. 读取考勤明细 Sheet（用于明细汇总）
@@ -556,6 +556,12 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                     pivot_header_row2 = row2
                     # 计算时段列数：从第4列开始到最后一列（因为透视表没有总计列，只有时段）
                     pivot_num_time_cols = len(row1) - 3  # 减去前3列（工号、姓名、部门）
+                    # 提取总天数：从第1行第4列开始，统计非空单元格数量（日期标题）
+                    day_count = 0
+                    for col_idx in range(3, len(row1)):
+                        if row1[col_idx] is not None:
+                            day_count += 1
+                    total_days = day_count
                 else:
                     # 如果列数不一致，以第一个为准，但可以取最大值，这里简单处理
                     if len(row1) - 3 > pivot_num_time_cols:
@@ -590,29 +596,22 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         finally:
             os.remove(tmp_path)
 
+    # 如果未从透视表获取天数，则从统计记录中推断（但统计表没有总天数，只能从明细中提取，这里不做复杂处理）
+    if total_days == 0:
+        # 如果规则中有天数，但从透视表无法获取，回退到根据时段列数/每天时段数计算
+        if num_periods_per_day > 0:
+            total_days = pivot_num_time_cols // num_periods_per_day
+        else:
+            total_days = 1  # 保险，但会出错
+
     # 去重统计（同之前）
     seen = {}
-    total_days = 1  # 默认值
     for r in all_records:
         emp_id = r["emp_id"]
         if emp_id not in seen:
             seen[emp_id] = r
-            # 取第一个记录的 total_days（如果存在）
-            if r.get("total_days", 0) > 0:
-                total_days = r["total_days"]
-        else:
-            # 合并 total_days（取最大值）
-            if r.get("total_days", 0) > seen[emp_id].get("total_days", 0):
-                seen[emp_id]["total_days"] = r["total_days"]
-
     merged = list(seen.values())
     merged.sort(key=lambda x: float(x["emp_id"]) if x["emp_id"].replace('.', '', 1).isdigit() else x["emp_id"])
-
-    # 如果未从统计表中获取 total_days，尝试从透视表推断（但可能不准确）
-    if total_days == 1 and pivot_num_time_cols > 0:
-        # 从透视表的列数推断天数：时段列数 / 时段数，但时段数未知，取最小可能性
-        # 但这不是可靠方法，我们保留默认1
-        pass
 
     # 生成汇总 Excel
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -626,26 +625,19 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         top=Side(style="thin", color="374151"), bottom=Side(style="thin", color="374151"),
     )
 
-    # ── Sheet 1: 考勤汇总 ──
+    # ── Sheet 1: 考勤汇总（已删除“出勤率”列） ──
     ws = wb_out.active
     ws.title = "考勤汇总"
-    headers = ["工号", "姓名", "部门", "分组", "出勤天数", "缺勤天数", "异常天数", "总打卡次数", "出勤率"]
+    # 修改：删除"出勤率"列，只保留前8列
+    headers = ["工号", "姓名", "部门", "分组", "出勤天数", "缺勤天数", "异常天数", "总打卡次数"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.fill = header_fill; cell.font = header_font
         cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
-    # 计算该月应打卡总次数 = 总天数 × 每日最低打卡次数
-    required_total = total_days * min_punch_per_day
-
     for i, rec in enumerate(merged, 2):
-        # 出勤率 = 有效打卡总次数 / 应打卡总次数 * 100%
-        if required_total > 0:
-            rate = f"{round(rec['total_punches'] / required_total * 100)}%"
-        else:
-            rate = "0%"
         vals = [rec["emp_id"], rec["name"], rec["dept"], rec["group"],
-                rec["attendance_days"], rec["absent_days"], rec["abnormal_days"], rec["total_punches"], rate]
+                rec["attendance_days"], rec["absent_days"], rec["abnormal_days"], rec["total_punches"]]
         for col, v in enumerate(vals, 1):
             cell = ws.cell(row=i, column=col, value=v)
             cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
@@ -693,7 +685,7 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         for ci in range(max(0, num_cols - 7)):
             ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
-    # ── Sheet 3: 考勤透视汇总（直接从合并后的透视表生成） ──
+    # ── Sheet 3: 考勤透视汇总（按天交替背景色） ──
     if merged_pivot and pivot_header_row1 is not None:
         ws3 = wb_out.create_sheet("考勤透视汇总")
 
@@ -727,7 +719,36 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                 cell.alignment = Alignment(horizontal="center")
                 cell.border = thin_border
 
-        # 写入数据行
+        # ---- 设置背景色：按天交替浅蓝/白 ----
+        # 定义颜色
+        light_blue_fill = PatternFill(start_color="E0F0FF", end_color="E0F0FF", fill_type="solid")
+        white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+        # 每天时段数（从规则获取）
+        num_periods = num_periods_per_day
+        if num_periods == 0:
+            num_periods = 3  # 默认
+
+        # 先设置表头背景（保持原样，不覆盖）
+        # 对数据列（从第4列到orig_cols）设置背景
+        for col_idx in range(4, orig_cols + 1):
+            # 计算当前列属于第几天（从0开始）
+            day_index = (col_idx - 4) // num_periods
+            # 如果 day_index 是偶数，浅蓝；奇数，白
+            if day_index % 2 == 0:
+                fill = light_blue_fill
+            else:
+                fill = white_fill
+            # 设置该列所有数据行的背景（从第3行开始到已有行数）
+            # 我们可以在写入数据时顺便设置，但先设置好列背景，然后数据行覆盖即可
+            # 但为了不覆盖表头，我们只设置从第3行开始的单元格
+            # 可以在写入数据行时同时设置填充，这里我们预定义填充颜色，在写数据时应用
+            # 更简单的方法：在写入数据行时根据列决定填充
+            # 为了代码清晰，我们记录每列的填充颜色到列表
+            # 我们将该列填充颜色存储到列表供数据行使用
+            pass  # 下面在写数据时动态判断
+
+        # 写入数据行，并应用背景色
         sorted_emp_ids = sorted(merged_pivot.keys(), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else x)
         row_idx = 3
         for emp_id in sorted_emp_ids:
@@ -735,19 +756,27 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
             name = data['name']
             dept = data['dept']
             periods = data['periods']
-            # 确保periods长度与pivot_num_time_cols一致
             while len(periods) < pivot_num_time_cols:
                 periods.append(0)
-            # 计算总计
             total_sum = sum(1 for p in periods if p == 1)
 
             row_vals = [emp_id, name, dept] + [1 if p == 1 else None for p in periods] + [total_sum]
 
+            # 写入每个单元格，并根据列号设置背景色
             for col_idx, val in enumerate(row_vals, 1):
                 cell = ws3.cell(row=row_idx, column=col_idx, value=val)
                 cell.font = cell_font
                 cell.alignment = Alignment(horizontal="center")
                 cell.border = thin_border
+                # 对于时段列（第4列到orig_cols），应用背景色
+                if 4 <= col_idx <= orig_cols:
+                    day_index = (col_idx - 4) // num_periods
+                    if day_index % 2 == 0:
+                        cell.fill = light_blue_fill
+                    else:
+                        cell.fill = white_fill
+                # 对于前3列和总计列，保留默认（无填充）或header样式，但这里header已设置
+                # 总计列不设置背景，保持白色
             row_idx += 1
 
         # 设置列宽
