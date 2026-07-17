@@ -451,6 +451,13 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         for ci in range(num_days * num_periods):
             ws3.column_dimensions[get_column_letter(4 + ci)].width = 8   # 从D列开始
 
+    # ===== 防御：清理所有工作表中的非法列键 =====
+    for sheet in wb.worksheets:
+        for key in list(sheet.column_dimensions.keys()):
+            if not key.isalpha():          # 只保留纯字母键
+                del sheet.column_dimensions[key]
+    # ==========================================
+
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
     filename = f"{file_label}_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
@@ -604,6 +611,13 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         ws2.column_dimensions[get_column_letter(4)].width = 10   # D
         for ci in range(max(0, num_cols - 7)):
             ws2.column_dimensions[get_column_letter(5 + ci)].width = 18  # 从E列开始
+
+    # ===== 防御：清理所有工作表中的非法列键 =====
+    for sheet in wb_out.worksheets:
+        for key in list(sheet.column_dimensions.keys()):
+            if not key.isalpha():
+                del sheet.column_dimensions[key]
+    # ==========================================
 
     buf = BytesIO()
     wb_out.save(buf); buf.seek(0)
