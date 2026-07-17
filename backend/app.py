@@ -368,6 +368,84 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         for ci in range(len(period_headers)):
             ws2.column_dimensions[chr(69 + ci)].width = 18
 
+        # ── Sheet 3: 透视表（一人一行） ──
+        ws3 = wb.create_sheet(f"考勤透视{sheet_suffix}")
+        num_days = records[0].get("total_days", 0) if records else 0
+        num_periods = len(periods)
+
+        # 表头第1行：合并日期
+        # 前3列：工号、姓名、部门
+        ws3.cell(row=1, column=1, value="工号").fill = header_fill
+        ws3.cell(row=1, column=1).font = header_font
+        ws3.cell(row=1, column=1).alignment = Alignment(horizontal="center")
+        ws3.cell(row=1, column=1).border = thin_border
+        ws3.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
+        ws3.cell(row=1, column=2, value="姓名").fill = header_fill
+        ws3.cell(row=1, column=2).font = header_font
+        ws3.cell(row=1, column=2).alignment = Alignment(horizontal="center")
+        ws3.cell(row=1, column=2).border = thin_border
+        ws3.merge_cells(start_row=1, start_column=2, end_row=2, end_column=2)
+        ws3.cell(row=1, column=3, value="部门").fill = header_fill
+        ws3.cell(row=1, column=3).font = header_font
+        ws3.cell(row=1, column=3).alignment = Alignment(horizontal="center")
+        ws3.cell(row=1, column=3).border = thin_border
+        ws3.merge_cells(start_row=1, start_column=3, end_row=2, end_column=3)
+
+        # 日期列：每个日期占 num_periods 列
+        for d in range(num_days):
+            start_col = 4 + d * num_periods
+            end_col = start_col + num_periods - 1
+            ws3.cell(row=1, column=start_col, value=f"第{d+1}天")
+            ws3.cell(row=1, column=start_col).fill = header_fill
+            ws3.cell(row=1, column=start_col).font = header_font
+            ws3.cell(row=1, column=start_col).alignment = Alignment(horizontal="center")
+            ws3.cell(row=1, column=start_col).border = thin_border
+            if num_periods > 1:
+                ws3.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
+            # 表头第2行：时段
+            for pi, p in enumerate(periods):
+                col = start_col + pi
+                ws3.cell(row=2, column=col, value=f"时段{pi+1}")
+                ws3.cell(row=2, column=col).fill = header_fill
+                ws3.cell(row=2, column=col).font = header_font
+                ws3.cell(row=2, column=col).alignment = Alignment(horizontal="center")
+                ws3.cell(row=2, column=col).border = thin_border
+
+        # 数据行：每人一行
+        for ri, rec in enumerate(records, 3):
+            ws3.cell(row=ri, column=1, value=rec["emp_id"]).font = cell_font
+            ws3.cell(row=ri, column=1).alignment = Alignment(horizontal="center")
+            ws3.cell(row=ri, column=1).border = thin_border
+            ws3.cell(row=ri, column=2, value=rec["name"]).font = cell_font
+            ws3.cell(row=ri, column=2).alignment = Alignment(horizontal="center")
+            ws3.cell(row=ri, column=2).border = thin_border
+            ws3.cell(row=ri, column=3, value=rec["dept"]).font = cell_font
+            ws3.cell(row=ri, column=3).alignment = Alignment(horizontal="center")
+            ws3.cell(row=ri, column=3).border = thin_border
+            # 建立 day -> detail 映射
+            day_map = {d["day"]: d for d in rec.get("daily_details", [])}
+            for d in range(num_days):
+                detail = day_map.get(d + 1)
+                start_col = 4 + d * num_periods
+                for pi in range(num_periods):
+                    col = start_col + pi
+                    val = ""
+                    if detail:
+                        periods_info = detail.get("periods", [])
+                        if pi < len(periods_info) and periods_info[pi].get("earliest"):
+                            val = 1
+                    cell = ws3.cell(row=ri, column=col, value=val)
+                    cell.font = cell_font
+                    cell.alignment = Alignment(horizontal="center")
+                    cell.border = thin_border
+
+        # 列宽
+        ws3.column_dimensions['A'].width = 10
+        ws3.column_dimensions['B'].width = 10
+        ws3.column_dimensions['C'].width = 10
+        for ci in range(num_days * num_periods):
+            ws3.column_dimensions[chr(68 + ci) if ci < 23 else 'A' + chr(65 + ci - 23)].width = 8
+
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
     filename = f"{file_label}_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
@@ -478,7 +556,7 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
     for i, rec in enumerate(merged, 2):
-        rate = f"{round(rec['attendance_days'] / total_days * 100)}%" if total_days else "0%"
+        rate = f"{round(rec['total_punches'] / (total_days * 3) * 100)}%" if total_days else "0%"
         vals = [rec["emp_id"], rec["name"], rec["dept"], rec["group"],
                 rec["attendance_days"], rec["absent_days"], rec["abnormal_days"], rec["total_punches"], rate]
         for col, v in enumerate(vals, 1):
