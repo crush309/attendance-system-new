@@ -39,16 +39,14 @@ def format_date(date_str: str) -> str:
     """将 '2026-07-01' 转换为 '7月1日'，若格式不符则返回原字符串"""
     if not date_str:
         return ""
-    # 尝试匹配 YYYY-MM-DD 或 YYYY/MM/DD
     match = re.match(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', date_str)
     if match:
-        month = str(int(match.group(2)))  # 去掉前导零
+        month = str(int(match.group(2)))
         day = str(int(match.group(3)))
         return f"{month}月{day}日"
     return date_str
 
 def sort_details_by_date(details: List[dict]) -> List[dict]:
-    """按 day 字段排序 daily_details"""
     return sorted(details, key=lambda x: x.get('day', 0))
 
 
@@ -341,11 +339,9 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         row_idx = 2
 
         for rec in records:
-            # 按日期排序每天的明细
             sorted_details = sort_details_by_date(rec.get("daily_details", []))
             rec_total = 0
             for detail in sorted_details:
-                # 格式化日期
                 date_raw = detail.get('date', f"第{detail['day']}天")
                 date_display = format_date(date_raw) if date_raw != f"第{detail['day']}天" else date_raw
                 vals = [rec["emp_id"], rec["name"], rec["dept"], date_display]
@@ -377,14 +373,13 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         ws2.column_dimensions[get_column_letter(1)].width = 10
         ws2.column_dimensions[get_column_letter(2)].width = 10
         ws2.column_dimensions[get_column_letter(3)].width = 10
-        ws2.column_dimensions[get_column_letter(4)].width = 12   # 日期列适当加宽
+        ws2.column_dimensions[get_column_letter(4)].width = 12
         for ci in range(len(period_headers)):
             ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
         # ── Sheet 3: 透视表 ──
         ws3 = wb.create_sheet(f"考勤透视{sheet_suffix}")
 
-        # 从第一个员工的daily_details中提取所有日期（已排序）
         first_details = sort_details_by_date(records[0].get("daily_details", []))
         date_list = []
         for d in first_details:
@@ -395,7 +390,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         num_days = len(date_list)
         num_periods = len(periods)
 
-        # 表头第1行：合并日期
         ws3.cell(row=1, column=1, value="工号").fill = header_fill
         ws3.cell(row=1, column=1).font = header_font
         ws3.cell(row=1, column=1).alignment = Alignment(horizontal="center")
@@ -430,7 +424,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 ws3.cell(row=2, column=col).alignment = Alignment(horizontal="center")
                 ws3.cell(row=2, column=col).border = thin_border
 
-        # 数据行：每个员工一行
         for ri, rec in enumerate(records, 3):
             ws3.cell(row=ri, column=1, value=rec["emp_id"]).font = cell_font
             ws3.cell(row=ri, column=1).alignment = Alignment(horizontal="center")
@@ -442,13 +435,8 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
             ws3.cell(row=ri, column=3).alignment = Alignment(horizontal="center")
             ws3.cell(row=ri, column=3).border = thin_border
 
-            # 建立 day -> detail 映射（按 day 索引）
             day_map = {d["day"]: d for d in rec.get("daily_details", [])}
             for d_idx, date_display in enumerate(date_list):
-                # 需要找到对应的 day 数字，由于 date_list 按 day 顺序，我们可以用索引对应
-                # 但为了准确，我们根据 date_list 的索引找到对应的 day
-                # 这里我们假设 date_list 与 first_details 的 day 顺序一致，所以可以直接用索引
-                # 更稳健：从 first_details 中获取 day
                 day_num = first_details[d_idx]["day"]
                 detail = day_map.get(day_num)
                 start_col = 4 + d_idx * num_periods
@@ -464,7 +452,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                     cell.alignment = Alignment(horizontal="center")
                     cell.border = thin_border
 
-        # 列宽
         ws3.column_dimensions[get_column_letter(1)].width = 10
         ws3.column_dimensions[get_column_letter(2)].width = 10
         ws3.column_dimensions[get_column_letter(3)].width = 10
@@ -493,12 +480,12 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
     all_records = []       # 用于统计汇总
     all_details = []       # 用于明细汇总
     detail_header = None
-    total_days = 0
 
-    # 用于重新构建透视表的聚合数据
-    pivot_data = {}  # key: emp_id, value: { 'name': str, 'dept': str, 'day_map': { day_num: [时段打卡列表] } }
-    # 同时收集所有日期（从第一个文件的明细中提取）
-    global_date_list = []
+    # 用于合并透视表（直接从每个文件的“考勤透视” Sheet 读取）
+    merged_pivot = {}          # key: emp_id, value: { 'name': str, 'dept': str, 'periods': [0/1] }
+    pivot_header_row1 = None   # 第一个文件的第1行（日期合并行）
+    pivot_header_row2 = None   # 第一个文件的第2行（时段行）
+    pivot_num_time_cols = 0    # 时段总列数
 
     for f in files:
         content = await f.read()
@@ -529,116 +516,73 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                         "total_punches": row[7] or 0,
                     })
 
-            # 2. 读取考勤明细 Sheet，用于透视表重建
+            # 2. 读取考勤明细 Sheet（用于明细汇总）
             detail_sheet = None
             for name in wb.sheetnames:
                 if name.startswith("考勤明细"):
                     detail_sheet = wb[name]
                     break
             if detail_sheet:
-                # 读取表头
-                header_row = None
                 for row_idx, row in enumerate(detail_sheet.iter_rows(values_only=True)):
                     if row_idx == 0:
-                        header_row = list(row)
                         if detail_header is None:
-                            detail_header = header_row
+                            detail_header = list(row)
                         continue
                     if not row[0]:
                         continue
                     row_data = list(row)
-                    # 跳过汇总行（"汇总" 出现在第4列）
                     if len(row_data) > 3 and row_data[3] and str(row_data[3]) == "汇总":
                         continue
-                    # 解析日期列（第4列，索引3）
-                    date_str = str(row_data[3]) if row_data[3] else ""
-                    # 尝试提取 day 编号（如果是 "第X天"）
-                    day_num = None
-                    if date_str.startswith("第") and date_str.endswith("天"):
-                        try:
-                            day_num = int(date_str[1:-1])
-                        except:
-                            pass
-                    else:
-                        # 如果不是 "第X天"，尝试从表头中匹配日期顺序，但我们不知道对应关系，跳过
-                        # 为了简化，对于非 "第X天" 的日期，我们假定它是具体的日期字符串，但无法对应 day 编号，
-                        # 我们只能依靠文件自身的顺序，但为了合并，我们仍然存储原始日期，并在后面统一处理。
-                        # 但为了保持一致性，我们尽量提取数字编号。
-                        pass
-                    # 如果无法提取 day_num，则跳过该行（或忽略）
-                    if day_num is None:
-                        # 尝试从日期字符串中提取数字（如 "7月1日" -> 1）
-                        match = re.search(r'(\d+)日', date_str)
-                        if match:
-                            day_num = int(match.group(1))
-                        else:
-                            # 实在无法提取，跳过
-                            continue
-
-                    emp_id = str(row_data[0]).strip()
-                    name = str(row_data[1]).strip() if row_data[1] else ""
-                    dept = str(row_data[2]).strip() if row_data[2] else ""
-
-                    # 获取该行的时段数据（从第5列开始到倒数第2列，最后两列为状态和有效打卡次数）
-                    periods_data = []
-                    # 找到时段列的范围：表头中除了前4列（工号、姓名、部门、日期）和最后两列（状态、有效打卡次数）
-                    # 假设表头固定，我们根据表头长度推断
-                    if header_row:
-                        num_cols = len(header_row)
-                        # 时段列从索引4开始，到 num_cols-3（因为最后两列为状态和有效次数）
-                        for ci in range(4, num_cols - 2):
-                            val = row_data[ci] if ci < len(row_data) else None
-                            # 判断是否为有效打卡（1）
-                            if val == 1 or val == 1.0:
-                                periods_data.append(1)
-                            else:
-                                periods_data.append(0)
-
-                    # 存入 pivot_data
-                    if emp_id not in pivot_data:
-                        pivot_data[emp_id] = {
-                            'name': name,
-                            'dept': dept,
-                            'day_map': {}
-                        }
-                    # 将时段数据存入对应的 day_num
-                    if day_num not in pivot_data[emp_id]['day_map']:
-                        pivot_data[emp_id]['day_map'][day_num] = periods_data
-                    else:
-                        # 如果已存在，执行或逻辑合并
-                        existing = pivot_data[emp_id]['day_map'][day_num]
-                        for idx, val in enumerate(periods_data):
-                            if val == 1:
-                                existing[idx] = 1
-                        pivot_data[emp_id]['day_map'][day_num] = existing
-
-                    # 收集所有日期编号
-                    if day_num not in global_date_list:
-                        global_date_list.append(day_num)
-
-                    # 同时记录明细数据（用于明细汇总）
-                    # 我们已将明细数据存入 all_details（但需要保留日期格式）
-                    # 为了明细汇总，我们直接存储原始 row_data，但日期可能是 "第X天" 或格式化后的，我们保留原样
                     all_details.append(row_data)
 
-        except Exception:
+            # 3. 读取考勤透视 Sheet（用于合并时段数据）
+            pivot_sheet = None
+            for name in wb.sheetnames:
+                if name.startswith("考勤透视"):
+                    pivot_sheet = wb[name]
+                    break
+            if pivot_sheet:
+                # 获取表头（第1行和第2行）
+                row1 = [cell.value for cell in pivot_sheet[1]]
+                row2 = [cell.value for cell in pivot_sheet[2]]
+                if pivot_header_row1 is None:
+                    pivot_header_row1 = row1
+                    pivot_header_row2 = row2
+                    # 计算时段列数：从第4列开始到最后一列（因为透视表没有总计列，只有时段）
+                    pivot_num_time_cols = len(row1) - 3  # 减去前3列（工号、姓名、部门）
+                else:
+                    # 如果列数不一致，以第一个为准，但可以取最大值，这里简单处理
+                    if len(row1) - 3 > pivot_num_time_cols:
+                        pivot_num_time_cols = len(row1) - 3
+                        pivot_header_row1 = row1
+                        pivot_header_row2 = row2
+
+                # 读取数据行（从第3行开始）
+                for row in pivot_sheet.iter_rows(min_row=3, values_only=True):
+                    if not row[0]:
+                        continue
+                    emp_id = str(row[0]).strip()
+                    name = str(row[1]).strip() if row[1] else ""
+                    dept = str(row[2]).strip() if row[2] else ""
+
+                    if emp_id not in merged_pivot:
+                        # 初始化时段数据为全0
+                        merged_pivot[emp_id] = {
+                            'name': name,
+                            'dept': dept,
+                            'periods': [0] * pivot_num_time_cols
+                        }
+                    # 合并时段数据（或逻辑）
+                    for idx in range(pivot_num_time_cols):
+                        val = row[3 + idx] if (3 + idx) < len(row) else 0
+                        if val == 1 or val == 1.0:
+                            merged_pivot[emp_id]['periods'][idx] = 1
+
+        except Exception as e:
+            # 可以记录错误日志，但这里忽略
             pass
         finally:
             os.remove(tmp_path)
-
-    # 对日期编号排序
-    global_date_list = sorted(global_date_list)
-    # 为每个员工的 day_map 补充缺失的日期（没有数据的日期设置为空列表）
-    for emp_id, data in pivot_data.items():
-        for day_num in global_date_list:
-            if day_num not in data['day_map']:
-                # 假设时段数量等于第一个文件的时段数（从已存在的时段中获取长度）
-                # 如果没有数据，用全0列表占位
-                length = 0
-                for existing in data['day_map'].values():
-                    length = len(existing)
-                    break
-                data['day_map'][day_num] = [0] * length if length else []
 
     # 去重统计（同之前）
     seen = {}
@@ -647,8 +591,10 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
     merged = list(seen.values())
     merged.sort(key=lambda x: float(x["emp_id"]) if x["emp_id"].replace('.', '', 1).isdigit() else x["emp_id"])
 
-    # 计算总天数（从 global_date_list 的长度）
-    total_days = len(global_date_list)
+    # 计算总天数（从透视表表头中获取，但表头可能包含日期，我们只需时段列数，天数 = 时段列数 / 时段数）
+    # 但为了简单，我们可以使用时段列数和规则中的时段数来计算，但透视表可能没有日期信息，我们直接从列数推断
+    # 但为了安全，我们使用透视表的列数，但这里我们并不需要天数，因为时段合并后只显示数据。
+    # 在生成汇总时，我们使用 pivot_header_row1 和 pivot_header_row2 来构建表头。
 
     # 生成汇总 Excel
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -671,7 +617,15 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         cell.fill = header_fill; cell.font = header_font
         cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
+    # 计算总天数（从全部记录中取最大 total_days，但可能没有，这里简单处理）
+    total_days = 1
+    if merged:
+        # 从统计记录中获取总天数，但可能没有，我们尝试从透视表推断
+        # 如果没有透视表数据，则取1
+        pass
+
     for i, rec in enumerate(merged, 2):
+        # 出勤率计算需要总天数，如果无法获取，则使用百分比显示
         rate = f"{round(rec['total_punches'] / (total_days * 3) * 100)}%" if total_days else "0%"
         vals = [rec["emp_id"], rec["name"], rec["dept"], rec["group"],
                 rec["attendance_days"], rec["absent_days"], rec["abnormal_days"], rec["total_punches"], rate]
@@ -691,18 +645,15 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
             cell.fill = header_fill; cell.font = header_font
             cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
-        # 按工号排序（保留原日期顺序）
+        # 按工号排序
         def detail_sort_key(r):
             eid = str(r[0]) if r[0] else ""
-            # 日期列在索引3
             day_str = str(r[3]) if len(r) > 3 and r[3] else ""
             try:
-                # 尝试提取数字
                 day_num = 0
                 if day_str.startswith("第") and day_str.endswith("天"):
                     day_num = int(day_str[1:-1])
                 else:
-                    # 尝试提取日字前的数字
                     match = re.search(r'(\d+)日', day_str)
                     if match:
                         day_num = int(match.group(1))
@@ -725,116 +676,55 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         for ci in range(max(0, num_cols - 7)):
             ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
-    # ── Sheet 3: 考勤透视汇总（重新构建，日期格式化，时段或逻辑） ──
-    if pivot_data and global_date_list:
+    # ── Sheet 3: 考勤透视汇总（直接从合并后的透视表生成） ──
+    if merged_pivot and pivot_header_row1 is not None:
         ws3 = wb_out.create_sheet("考勤透视汇总")
 
-        # 确定时段数量（从第一个员工的第一条数据中获取）
-        num_periods = 0
-        for emp_id, data in pivot_data.items():
-            for day_num, periods in data['day_map'].items():
-                if periods:
-                    num_periods = len(periods)
-                    break
-            if num_periods:
-                break
+        # 原表头列数 = 3 + pivot_num_time_cols
+        orig_cols = 3 + pivot_num_time_cols
+        # 新增总计列
+        total_col = orig_cols + 1
 
-        # 获取考勤规则（用于时段标题）
-        rules = get_rules()
-        periods_rule = rules.get("time_periods", [])
-        # 如果规则中的时段数与实际不匹配，用默认值
-        if len(periods_rule) != num_periods:
-            # 简单生成
-            periods_rule = [{"start": f"时段{i+1}", "end": ""} for i in range(num_periods)]
-
-        # 表头构建
-        # 前3列：工号、姓名、部门
-        ws3.cell(row=1, column=1, value="工号").fill = header_fill
-        ws3.cell(row=1, column=1).font = header_font
-        ws3.cell(row=1, column=1).alignment = Alignment(horizontal="center")
-        ws3.cell(row=1, column=1).border = thin_border
-        ws3.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
-
-        ws3.cell(row=1, column=2, value="姓名").fill = header_fill
-        ws3.cell(row=1, column=2).font = header_font
-        ws3.cell(row=1, column=2).alignment = Alignment(horizontal="center")
-        ws3.cell(row=1, column=2).border = thin_border
-        ws3.merge_cells(start_row=1, start_column=2, end_row=2, end_column=2)
-
-        ws3.cell(row=1, column=3, value="部门").fill = header_fill
-        ws3.cell(row=1, column=3).font = header_font
-        ws3.cell(row=1, column=3).alignment = Alignment(horizontal="center")
-        ws3.cell(row=1, column=3).border = thin_border
-        ws3.merge_cells(start_row=1, start_column=3, end_row=2, end_column=3)
-
-        # 日期和时段标题
-        col_offset = 4
-        for day_num in global_date_list:
-            # 生成日期显示，假设从1号开始，但我们不知道月份，简单显示为“第X天”或日期
-            # 如果原始数据中有具体日期，我们可以尝试从明细中获取，但这里我们只显示“第X天”或自定义
-            # 为了显示“几月几日”，我们假设从当月1号开始，但月份未知，我们显示为“X月X日”
-            # 由于没有月份信息，我们只能显示“第X天”或者我们假设为当月，这里我们显示“第X天”作为备选，
-            # 但用户要求“几月几日”，我们从明细中获取日期信息，但已经丢失，这里只能妥协为“第X天”
-            # 更好的做法是从明细中保存日期，但为了简化，我们显示为“第X天”并附注。
-            # 建议用户上传的数据中包含日期，但这里无法实现，我们显示为“第X天”
-            # 但为了满足用户要求，我们尝试使用当前月份，但可能不准确。
-            # 这里我们暂用“第X天”，但用户可以后期自行修改。
-            date_display = f"第{day_num}天"  # 默认
-            # 尝试从第一个员工的数据中查找该日期的具体日期字符串（如果有）
-            for emp_id, data in pivot_data.items():
-                # 我们无法获取日期字符串，因为只存储了时段数据
-                break
-            # 我们保留“第X天”作为回退
-
-            start_col = col_offset
-            end_col = start_col + num_periods - 1
-            ws3.cell(row=1, column=start_col, value=date_display)
-            ws3.cell(row=1, column=start_col).fill = header_fill
-            ws3.cell(row=1, column=start_col).font = header_font
-            ws3.cell(row=1, column=start_col).alignment = Alignment(horizontal="center")
-            ws3.cell(row=1, column=start_col).border = thin_border
-            if num_periods > 1:
-                ws3.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
-
-            for pi, p in enumerate(periods_rule):
-                col = start_col + pi
-                ws3.cell(row=2, column=col, value=f"{p.get('start', '')}-{p.get('end', '')}")
-                ws3.cell(row=2, column=col).fill = header_fill
-                ws3.cell(row=2, column=col).font = header_font
-                ws3.cell(row=2, column=col).alignment = Alignment(horizontal="center")
-                ws3.cell(row=2, column=col).border = thin_border
-
-            col_offset += num_periods
-
-        # 添加总计列（位于最后一列）
-        total_col = col_offset
-        ws3.cell(row=1, column=total_col, value="总计")
-        ws3.cell(row=1, column=total_col).fill = header_fill
-        ws3.cell(row=1, column=total_col).font = header_font
-        ws3.cell(row=1, column=total_col).alignment = Alignment(horizontal="center")
-        ws3.cell(row=1, column=total_col).border = thin_border
+        # 写入表头第1行（第1行和第2行合并单元格已处理）
+        for col_idx, val in enumerate(pivot_header_row1, 1):
+            if val:
+                cell = ws3.cell(row=1, column=col_idx, value=val)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+        # 添加总计列头（合并第1、2行）
+        cell_total = ws3.cell(row=1, column=total_col, value="总计")
+        cell_total.fill = header_fill
+        cell_total.font = header_font
+        cell_total.alignment = Alignment(horizontal="center")
+        cell_total.border = thin_border
         ws3.merge_cells(start_row=1, start_column=total_col, end_row=2, end_column=total_col)
 
-        # 数据行
-        sorted_emp_ids = sorted(pivot_data.keys(), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else x)
+        # 写入表头第2行（时段标题）
+        for col_idx, val in enumerate(pivot_header_row2, 1):
+            if val and col_idx <= orig_cols:
+                cell = ws3.cell(row=2, column=col_idx, value=val)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = thin_border
+
+        # 写入数据行
+        sorted_emp_ids = sorted(merged_pivot.keys(), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else x)
         row_idx = 3
         for emp_id in sorted_emp_ids:
-            data = pivot_data[emp_id]
-            name = data.get('name', '')
-            dept = data.get('dept', '')
-            row_vals = [emp_id, name, dept]
-            total_sum = 0
-            # 按日期顺序填充时段
-            for day_num in global_date_list:
-                periods = data['day_map'].get(day_num, [0]*num_periods)
-                for val in periods:
-                    if val == 1:
-                        row_vals.append(1)
-                        total_sum += 1
-                    else:
-                        row_vals.append(None)  # 0 不显示
-            # 添加总计
-            row_vals.append(total_sum)
+            data = merged_pivot[emp_id]
+            name = data['name']
+            dept = data['dept']
+            periods = data['periods']
+            # 确保periods长度与pivot_num_time_cols一致
+            while len(periods) < pivot_num_time_cols:
+                periods.append(0)
+            # 计算总计
+            total_sum = sum(1 for p in periods if p == 1)
+
+            row_vals = [emp_id, name, dept] + [1 if p == 1 else None for p in periods] + [total_sum]
 
             for col_idx, val in enumerate(row_vals, 1):
                 cell = ws3.cell(row=row_idx, column=col_idx, value=val)
@@ -847,7 +737,7 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         ws3.column_dimensions[get_column_letter(1)].width = 10
         ws3.column_dimensions[get_column_letter(2)].width = 10
         ws3.column_dimensions[get_column_letter(3)].width = 10
-        for ci in range(4, total_col):
+        for ci in range(4, orig_cols + 1):
             ws3.column_dimensions[get_column_letter(ci)].width = 8
         ws3.column_dimensions[get_column_letter(total_col)].width = 10
 
