@@ -33,7 +33,7 @@ app = FastAPI(title="考勤数据分析系统")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
-# ── Models (保持不变) ──
+# ── Models ──
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -73,7 +73,7 @@ class PermissionsUpdate(BaseModel):
     permissions: dict
 
 
-# ── Auth 函数 (保持不变) ──
+# ── Auth ──
 def create_token(data: dict) -> str:
     expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
     data.update({"exp": expire})
@@ -104,7 +104,7 @@ def is_admin_or_perm(authorization: str, perm: str) -> dict:
     return payload
 
 
-# ── Auth API (保持不变) ──
+# ── Auth API ──
 @app.post("/api/login")
 def login(req: LoginRequest):
     user = authenticate_user(req.username, req.password)
@@ -250,7 +250,6 @@ def api_get_members(group_id: int, authorization: str = Header(None, alias="Auth
 
 
 # ── Export ──
-
 @app.post("/api/export")
 async def export_excel(data: dict, authorization: str = Header(None, alias="Authorization")):
     get_payload(authorization)
@@ -393,7 +392,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 ws3.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
             for pi, p in enumerate(periods):
                 col = start_col + pi
-                # ✅ 修改：只显示时间范围，不含“时段X”
                 ws3.cell(row=2, column=col, value=f"{p['start']}-{p['end']}")
                 ws3.cell(row=2, column=col).fill = header_fill
                 ws3.cell(row=2, column=col).font = header_font
@@ -447,7 +445,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
 
 
 # ── Merge Export ──
-
 @app.post("/api/merge-export")
 async def merge_export(files: List[UploadFile] = File(...), authorization: str = Header(None, alias="Authorization")):
     get_payload(authorization)
@@ -464,7 +461,6 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
     pivot_header_row1 = None   # 第一个文件的第1行（日期合并行）
     pivot_header_row2 = None   # 第一个文件的第2行（时段行）
     pivot_num_cols = 0
-    pivot_col_offset = 4       # 从第4列开始是时段数据（前3列为工号、姓名、部门）
 
     for f in files:
         content = await f.read()
@@ -550,7 +546,6 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                         pivot_merged[emp_id]['name'] = str(row[1]).strip() if row[1] else ''
                         pivot_merged[emp_id]['dept'] = str(row[2]).strip() if row[2] else ''
                         # 时段数据字典，键为列索引（从0开始计数，相对于时段列）
-                        # 我们只记录从第4列开始的时段数据
                         num_time_cols = len(row) - 3
                         for ci in range(num_time_cols):
                             pivot_merged[emp_id][ci] = 0  # 初始为0
@@ -638,10 +633,16 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         for ci in range(max(0, num_cols - 7)):
             ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
-    # ── Sheet 3: 考勤透视汇总（合并后的全员表格，时段数据为或逻辑） ──
+    # ── Sheet 3: 考勤透视汇总（合并后的全员表格，时段数据为或逻辑，0不显示，新增总计列） ──
     if pivot_merged and pivot_header_row1 is not None:
         ws3 = wb_out.create_sheet("考勤透视汇总")
-        # 写入表头第1行
+
+        # 确定原透视表的列数（不含新增的总计列）
+        orig_cols = pivot_num_cols
+        # 新增总计列，位于最后一列
+        total_col = orig_cols + 1
+
+        # 写入表头第1行（在原表头基础上，最后加一个“总计”合并单元格）
         for col_idx, val in enumerate(pivot_header_row1, 1):
             if val:
                 cell = ws3.cell(row=1, column=col_idx, value=val)
@@ -649,9 +650,18 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                 cell.font = header_font
                 cell.alignment = Alignment(horizontal="center")
                 cell.border = thin_border
-        # 写入表头第2行
+        # 新增总计列的表头：第1行写“总计”，并合并第1行和第2行（类似工号列）
+        cell_total = ws3.cell(row=1, column=total_col, value="总计")
+        cell_total.fill = header_fill
+        cell_total.font = header_font
+        cell_total.alignment = Alignment(horizontal="center")
+        cell_total.border = thin_border
+        # 合并该列的第1、2行
+        ws3.merge_cells(start_row=1, start_column=total_col, end_row=2, end_column=total_col)
+
+        # 写入表头第2行（原时段标题，不包含总计列，因为已合并）
         for col_idx, val in enumerate(pivot_header_row2, 1):
-            if val:
+            if val and col_idx <= orig_cols:  # 只写原有列
                 cell = ws3.cell(row=2, column=col_idx, value=val)
                 cell.fill = header_fill
                 cell.font = header_font
@@ -663,17 +673,25 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         row_idx = 3
         for emp_id in sorted_emp_ids:
             data = pivot_merged[emp_id]
-            # 获取姓名、部门（如果pivot_merged中没有，可以从merged统计中取，但可能不完整，这里用存储的）
             name = data.get('name', '')
             dept = data.get('dept', '')
-            # 构建行数据
+            # 准备行数据：前3列为工号、姓名、部门
             row_vals = [emp_id, name, dept]
             # 时段列：从第4列开始，按列索引顺序填充
-            # 我们需要知道一共有多少时段列，从pivot_merged的某个员工数据中获取键的数量（去掉'name'和'dept'）
             time_cols = [k for k in data.keys() if isinstance(k, int)]
-            max_time_col = max(time_cols) if time_cols else 0
+            max_time_col = max(time_cols) if time_cols else -1
+            total_sum = 0
             for ci in range(max_time_col + 1):
-                row_vals.append(data.get(ci, 0))
+                val = data.get(ci, 0)
+                # 如果值为0，则不写入内容（留空），但需要计算总和
+                if val == 1:
+                    total_sum += 1
+                    row_vals.append(1)
+                else:
+                    row_vals.append(None)  # 留空
+            # 最后添加总计列
+            row_vals.append(total_sum)
+
             # 写入该行
             for col_idx, val in enumerate(row_vals, 1):
                 cell = ws3.cell(row=row_idx, column=col_idx, value=val)
@@ -682,13 +700,13 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                 cell.border = thin_border
             row_idx += 1
 
-        # 设置列宽
+        # 设置列宽：前3列10，其余时段列8，总计列10
         ws3.column_dimensions[get_column_letter(1)].width = 10
         ws3.column_dimensions[get_column_letter(2)].width = 10
         ws3.column_dimensions[get_column_letter(3)].width = 10
-        # 其余列宽设为8
-        for ci in range(4, pivot_num_cols + 1):
+        for ci in range(4, orig_cols + 1):
             ws3.column_dimensions[get_column_letter(ci)].width = 8
+        ws3.column_dimensions[get_column_letter(total_col)].width = 10
 
     # ===== 清空所有列宽设置（防御） =====
     for sheet in wb_out.worksheets:
@@ -703,7 +721,6 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
 
 
 # ── Frontend ──
-
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 @app.get("/")
