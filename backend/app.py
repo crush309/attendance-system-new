@@ -477,6 +477,10 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
 
     from openpyxl import Workbook, load_workbook as xl_load
 
+    # 获取考勤规则（用于计算应打卡次数）
+    rules = get_rules()
+    min_punch_per_day = rules.get("min_punch_per_day", 2)  # 默认2
+
     all_records = []       # 用于统计汇总
     all_details = []       # 用于明细汇总
     detail_header = None
@@ -514,6 +518,8 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
                         "absent_days": row[5] or 0,
                         "abnormal_days": row[6] or 0,
                         "total_punches": row[7] or 0,
+                        # 提取 total_days（如果有）
+                        "total_days": int(row[8]) if len(row) > 8 and row[8] else 0,
                     })
 
             # 2. 读取考勤明细 Sheet（用于明细汇总）
@@ -586,15 +592,27 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
 
     # 去重统计（同之前）
     seen = {}
+    total_days = 1  # 默认值
     for r in all_records:
-        seen[r["emp_id"]] = r
+        emp_id = r["emp_id"]
+        if emp_id not in seen:
+            seen[emp_id] = r
+            # 取第一个记录的 total_days（如果存在）
+            if r.get("total_days", 0) > 0:
+                total_days = r["total_days"]
+        else:
+            # 合并 total_days（取最大值）
+            if r.get("total_days", 0) > seen[emp_id].get("total_days", 0):
+                seen[emp_id]["total_days"] = r["total_days"]
+
     merged = list(seen.values())
     merged.sort(key=lambda x: float(x["emp_id"]) if x["emp_id"].replace('.', '', 1).isdigit() else x["emp_id"])
 
-    # 计算总天数（从透视表表头中获取，但表头可能包含日期，我们只需时段列数，天数 = 时段列数 / 时段数）
-    # 但为了简单，我们可以使用时段列数和规则中的时段数来计算，但透视表可能没有日期信息，我们直接从列数推断
-    # 但为了安全，我们使用透视表的列数，但这里我们并不需要天数，因为时段合并后只显示数据。
-    # 在生成汇总时，我们使用 pivot_header_row1 和 pivot_header_row2 来构建表头。
+    # 如果未从统计表中获取 total_days，尝试从透视表推断（但可能不准确）
+    if total_days == 1 and pivot_num_time_cols > 0:
+        # 从透视表的列数推断天数：时段列数 / 时段数，但时段数未知，取最小可能性
+        # 但这不是可靠方法，我们保留默认1
+        pass
 
     # 生成汇总 Excel
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -617,16 +635,15 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         cell.fill = header_fill; cell.font = header_font
         cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
-    # 计算总天数（从全部记录中取最大 total_days，但可能没有，这里简单处理）
-    total_days = 1
-    if merged:
-        # 从统计记录中获取总天数，但可能没有，我们尝试从透视表推断
-        # 如果没有透视表数据，则取1
-        pass
+    # 计算该月应打卡总次数 = 总天数 × 每日最低打卡次数
+    required_total = total_days * min_punch_per_day
 
     for i, rec in enumerate(merged, 2):
-        # 出勤率计算需要总天数，如果无法获取，则使用百分比显示
-        rate = f"{round(rec['total_punches'] / (total_days * 3) * 100)}%" if total_days else "0%"
+        # 出勤率 = 有效打卡总次数 / 应打卡总次数 * 100%
+        if required_total > 0:
+            rate = f"{round(rec['total_punches'] / required_total * 100)}%"
+        else:
+            rate = "0%"
         vals = [rec["emp_id"], rec["name"], rec["dept"], rec["group"],
                 rec["attendance_days"], rec["absent_days"], rec["abnormal_days"], rec["total_punches"], rate]
         for col, v in enumerate(vals, 1):
