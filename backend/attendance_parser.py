@@ -2,6 +2,7 @@ import re
 from typing import List, Tuple
 import xlrd
 from openpyxl import load_workbook
+from datetime import datetime, timedelta
 
 
 def parse_attendance_file(file_path: str, rules: dict) -> dict:
@@ -24,11 +25,9 @@ def _count_valid_punches(times: List[str], rules: dict) -> Tuple[int, dict]:
     periods = rules.get("time_periods", [])
     per_period = {}
     total = 0
-    # 归一化所有时间
     norm_times = [_normalize_time(t) for t in times]
     for i, p in enumerate(periods):
         valid_in_period = sorted([t for t in norm_times if p["start"] <= t <= p["end"]])
-        # 每个时段最多1次有效打卡
         has_punch = 1 if valid_in_period else 0
         per_period[i] = {"count": has_punch, "earliest": valid_in_period[0] if valid_in_period else None}
         total += has_punch
@@ -39,7 +38,6 @@ def _count_valid_punches(times: List[str], rules: dict) -> Tuple[int, dict]:
 def _extract_times(cell_value) -> List[str]:
     if not cell_value:
         return []
-    # 处理 Excel 数字时间格式 (如 0.375 = 9:00)
     if isinstance(cell_value, (int, float)):
         val = float(cell_value)
         if 0 <= val < 1:
@@ -64,24 +62,55 @@ def _extract_times(cell_value) -> List[str]:
 def _parse_xls(file_path: str, rules: dict) -> dict:
     wb = xlrd.open_workbook(file_path)
     ws = wb.sheet_by_index(0)
-    return _extract_data(ws.nrows, ws.ncols, lambda r, c: ws.cell_value(r, c), rules)
+    return _extract_data(ws.nrows, ws.ncols, lambda r, c: ws.cell_value(r, c), rules, file_path)
 
 
 def _parse_xlsx(file_path: str, rules: dict) -> dict:
     wb = load_workbook(file_path, data_only=True)
     ws = wb.active
-    return _extract_data(ws.max_row, ws.max_column, lambda r, c: ws.cell(r + 1, c + 1).value, rules)
+    return _extract_data(ws.max_row, ws.max_column, lambda r, c: ws.cell(r + 1, c + 1).value, rules, file_path)
 
 
-def _extract_data(nrows, ncols, get_cell, rules) -> dict:
+def _extract_data(nrows, ncols, get_cell, rules, file_path=None) -> dict:
+    # ---------- 1. 查找统计日期，获取起始日期 ----------
+    start_date_str = None
+    start_date = None
+    for r in range(min(10, nrows)):
+        val = get_cell(r, 0)
+        if val and "统计日期" in str(val):
+            # 提取 2026/06/01-2026/06/30 中的起始日期
+            parts = str(val).split("统计日期:")[-1].strip()
+            if "-" in parts:
+                start_part = parts.split("-")[0].strip()
+                # 尝试解析 YYYY/MM/DD 或 YYYY-MM-DD
+                try:
+                    # 替换 / 为 -
+                    start_part = start_part.replace("/", "-")
+                    start_date = datetime.strptime(start_part, "%Y-%m-%d").date()
+                    start_date_str = start_date.strftime("%Y-%m-%d")
+                    break
+                except:
+                    pass
+
+    # 如果没找到，尝试从文件名或默认值（但建议提示）
+    if start_date is None:
+        # 若无法获取，则回退到使用当前月份的第一天（但可能不准确）
+        today = datetime.now().date()
+        start_date = today.replace(day=1)
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        # 但最好提醒用户，可以打印日志，这里不处理
+
+    # ---------- 2. 识别表头行 ----------
     header_row = -1
     for r in range(min(10, nrows)):
         val = get_cell(r, 0)
         if val and "工号" in str(val):
-            header_row = r; break
+            header_row = r
+            break
     if header_row == -1:
         raise ValueError("无法识别表头，找不到'工号'列")
 
+    # 收集日期列（表头中从第3列（索引3）开始，值为数字）
     date_cols = []
     for c in range(3, ncols):
         hv = get_cell(header_row, c)
@@ -105,16 +134,30 @@ def _extract_data(nrows, ncols, get_cell, rules) -> dict:
         if not emp_id and not name:
             continue
 
-        attendance_days = 0; absent_days = 0; abnormal_days = 0; total_punches = 0
-
+        attendance_days = 0
+        absent_days = 0
+        abnormal_days = 0
+        total_punches = 0
         daily_details = []
+
         for c in date_cols:
             day_num = int(str(get_cell(header_row, c)).strip())
+            # 生成具体日期字符串（基于起始日期 + day_num - 1 天）
+            if start_date:
+                current_date = start_date + timedelta(days=day_num - 1)
+                date_str = current_date.strftime("%Y-%m-%d")
+            else:
+                date_str = f"第{day_num}天"  # 回退
+
             times = _extract_times(get_cell(r, c))
             if not times:
                 absent_days += 1
                 daily_details.append({
-                    "day": day_num, "status": "absent", "earliest": None, "valid_count": 0,
+                    "day": day_num,
+                    "date": date_str,
+                    "status": "absent",
+                    "earliest": None,
+                    "valid_count": 0,
                     "periods": [{"label": f"{p['start']}-{p['end']}", "earliest": None} for p in periods],
                 })
             else:
@@ -134,15 +177,24 @@ def _extract_data(nrows, ncols, get_cell, rules) -> dict:
                     abnormal_days += 1
                     status = "abnormal"
                 daily_details.append({
-                    "day": day_num, "status": status, "earliest": overall_earliest,
-                    "valid_count": valid_count, "periods": period_info,
+                    "day": day_num,
+                    "date": date_str,
+                    "status": status,
+                    "earliest": overall_earliest,
+                    "valid_count": valid_count,
+                    "periods": period_info,
                 })
 
         records.append({
-            "emp_id": emp_id, "name": name, "dept": dept,
-            "attendance_days": attendance_days, "absent_days": absent_days,
-            "abnormal_days": abnormal_days, "total_punches": total_punches,
-            "total_days": total_days, "daily_details": daily_details,
+            "emp_id": emp_id,
+            "name": name,
+            "dept": dept,
+            "attendance_days": attendance_days,
+            "absent_days": absent_days,
+            "abnormal_days": abnormal_days,
+            "total_punches": total_punches,
+            "total_days": total_days,
+            "daily_details": daily_details,
         })
 
     return {"total_days": total_days, "records": records}
