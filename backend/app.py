@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from jose import jwt, JWTError
 from io import BytesIO
-from openpyxl.utils import get_column_letter  # ✅ 新增导入
+from openpyxl.utils import get_column_letter
 
 from database import (
     init_db, create_user, authenticate_user, get_user_by_id,
@@ -317,7 +317,7 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
             cell = ws.cell(row=i, column=col, value=v)
             cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
-    # ✅ 使用 get_column_letter 替换 chr(64+col)
+    # 设置列宽
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(col)].width = 16
 
@@ -365,21 +365,20 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
             row_idx += 1
 
-        # ✅ 使用 get_column_letter
-        ws2.column_dimensions[get_column_letter(1)].width = 10   # A
-        ws2.column_dimensions[get_column_letter(2)].width = 10   # B
-        ws2.column_dimensions[get_column_letter(3)].width = 10   # C
-        ws2.column_dimensions[get_column_letter(4)].width = 10   # D
+        # 设置列宽
+        ws2.column_dimensions[get_column_letter(1)].width = 10
+        ws2.column_dimensions[get_column_letter(2)].width = 10
+        ws2.column_dimensions[get_column_letter(3)].width = 10
+        ws2.column_dimensions[get_column_letter(4)].width = 10
         for ci in range(len(period_headers)):
-            ws2.column_dimensions[get_column_letter(5 + ci)].width = 18  # 从E列开始
+            ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
-        # ── Sheet 3: 透视表（一人一行） ──
+        # ── Sheet 3: 透视表 ──
         ws3 = wb.create_sheet(f"考勤透视{sheet_suffix}")
         num_days = records[0].get("total_days", 0) if records else 0
         num_periods = len(periods)
 
-        # 表头第1行：合并日期
-        # 前3列：工号、姓名、部门
+        # 表头
         ws3.cell(row=1, column=1, value="工号").fill = header_fill
         ws3.cell(row=1, column=1).font = header_font
         ws3.cell(row=1, column=1).alignment = Alignment(horizontal="center")
@@ -396,7 +395,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
         ws3.cell(row=1, column=3).border = thin_border
         ws3.merge_cells(start_row=1, start_column=3, end_row=2, end_column=3)
 
-        # 日期列：每个日期占 num_periods 列
         for d in range(num_days):
             start_col = 4 + d * num_periods
             end_col = start_col + num_periods - 1
@@ -407,7 +405,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
             ws3.cell(row=1, column=start_col).border = thin_border
             if num_periods > 1:
                 ws3.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=end_col)
-            # 表头第2行：时段
             for pi, p in enumerate(periods):
                 col = start_col + pi
                 ws3.cell(row=2, column=col, value=f"时段{pi+1}")
@@ -416,7 +413,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                 ws3.cell(row=2, column=col).alignment = Alignment(horizontal="center")
                 ws3.cell(row=2, column=col).border = thin_border
 
-        # 数据行：每人一行
         for ri, rec in enumerate(records, 3):
             ws3.cell(row=ri, column=1, value=rec["emp_id"]).font = cell_font
             ws3.cell(row=ri, column=1).alignment = Alignment(horizontal="center")
@@ -427,7 +423,6 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
             ws3.cell(row=ri, column=3, value=rec["dept"]).font = cell_font
             ws3.cell(row=ri, column=3).alignment = Alignment(horizontal="center")
             ws3.cell(row=ri, column=3).border = thin_border
-            # 建立 day -> detail 映射
             day_map = {d["day"]: d for d in rec.get("daily_details", [])}
             for d in range(num_days):
                 detail = day_map.get(d + 1)
@@ -444,19 +439,17 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
                     cell.alignment = Alignment(horizontal="center")
                     cell.border = thin_border
 
-        # ✅ 使用 get_column_letter 设置列宽
+        # 设置列宽
         ws3.column_dimensions[get_column_letter(1)].width = 10
         ws3.column_dimensions[get_column_letter(2)].width = 10
         ws3.column_dimensions[get_column_letter(3)].width = 10
         for ci in range(num_days * num_periods):
-            ws3.column_dimensions[get_column_letter(4 + ci)].width = 8   # 从D列开始
+            ws3.column_dimensions[get_column_letter(4 + ci)].width = 8
 
-    # ===== 防御：清理所有工作表中的非法列键 =====
+    # ===== 终极防御：清空所有工作表的列宽设置（彻底删除非法键） =====
     for sheet in wb.worksheets:
-        for key in list(sheet.column_dimensions.keys()):
-            if not key.isalpha():          # 只保留纯字母键
-                del sheet.column_dimensions[key]
-    # ==========================================
+        sheet.column_dimensions.clear()
+    # ================================================================
 
     buf = BytesIO()
     wb.save(buf); buf.seek(0)
@@ -534,7 +527,7 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
         finally:
             os.remove(tmp_path)
 
-    # 去重统计（以 emp_id 为主键）
+    # 去重统计
     seen = {}
     for r in all_records:
         seen[r["emp_id"]] = r
@@ -575,7 +568,6 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
             cell = ws.cell(row=i, column=col, value=v)
             cell.font = cell_font; cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
 
-    # ✅ 使用 get_column_letter
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(col)].width = 16
 
@@ -583,12 +575,10 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
     if all_details and detail_header:
         ws2 = wb_out.create_sheet("考勤明细汇总")
         num_cols = len(detail_header)
-        # 写表头
         for col, v in enumerate(detail_header, 1):
             cell = ws2.cell(row=1, column=col, value=v)
             cell.fill = header_fill; cell.font = header_font
             cell.alignment = Alignment(horizontal="center"); cell.border = thin_border
-        # 按工号+日期排序
         def detail_sort_key(r):
             eid = str(r[0]) if r[0] else ""
             day = str(r[3]) if len(r) > 3 and r[3] else ""
@@ -597,27 +587,23 @@ async def merge_export(files: List[UploadFile] = File(...), authorization: str =
             except:
                 return (eid, day)
         all_details.sort(key=detail_sort_key)
-        # 写数据
         for i, row_data in enumerate(all_details, 2):
             for col in range(num_cols):
                 v = row_data[col] if col < len(row_data) else None
                 cell = ws2.cell(row=i, column=col + 1, value=v)
                 cell.font = cell_font; cell.alignment = Alignment(horizontal="center")
                 cell.border = thin_border
-        # ✅ 使用 get_column_letter 设置列宽
-        ws2.column_dimensions[get_column_letter(1)].width = 10   # A
-        ws2.column_dimensions[get_column_letter(2)].width = 10   # B
-        ws2.column_dimensions[get_column_letter(3)].width = 10   # C
-        ws2.column_dimensions[get_column_letter(4)].width = 10   # D
+        ws2.column_dimensions[get_column_letter(1)].width = 10
+        ws2.column_dimensions[get_column_letter(2)].width = 10
+        ws2.column_dimensions[get_column_letter(3)].width = 10
+        ws2.column_dimensions[get_column_letter(4)].width = 10
         for ci in range(max(0, num_cols - 7)):
-            ws2.column_dimensions[get_column_letter(5 + ci)].width = 18  # 从E列开始
+            ws2.column_dimensions[get_column_letter(5 + ci)].width = 18
 
-    # ===== 防御：清理所有工作表中的非法列键 =====
+    # ===== 终极防御：清空所有工作表的列宽设置 =====
     for sheet in wb_out.worksheets:
-        for key in list(sheet.column_dimensions.keys()):
-            if not key.isalpha():
-                del sheet.column_dimensions[key]
-    # ==========================================
+        sheet.column_dimensions.clear()
+    # ============================================
 
     buf = BytesIO()
     wb_out.save(buf); buf.seek(0)
