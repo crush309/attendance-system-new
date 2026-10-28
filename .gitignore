@@ -3,5 +3,7 @@ __pycache__/
 data/
 uploads/*
 .env
+.env.*
+.vercel/
 *.log
 .venv/

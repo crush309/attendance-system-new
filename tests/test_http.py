@@ -17,18 +17,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LocalHttpTests(unittest.TestCase):
+    SERVERLESS = False
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         env = dict(os.environ)
         env.pop('DATABASE_URL', None)
         env['SQLITE_DB_PATH'] = str(Path(cls.temp.name) / 'test.db')
+        if cls.SERVERLESS:
+            env.update(VERCEL='1', TEMP=cls.temp.name, TMP=cls.temp.name, TMPDIR=cls.temp.name)
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
         cls.base = f'http://127.0.0.1:{port}'
         cls.log = open(Path(cls.temp.name) / 'server.log', 'w+b')
-        cls.process = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'backend.app:app',
+        entrypoint = 'app:app' if cls.SERVERLESS else 'backend.app:app'
+        cls.process = subprocess.Popen([sys.executable, '-m', 'uvicorn', entrypoint,
                                        '--host', '127.0.0.1', '--port', str(port)],
                                       cwd=ROOT, env=env, stdout=cls.log, stderr=cls.log)
         for _ in range(100):
@@ -97,6 +102,10 @@ class LocalHttpTests(unittest.TestCase):
         self.assertEqual(output['考勤统计'].cell(2, 8).value, 2)
         self.assertEqual(output['考勤明细'].cell(2, 4).value, '10月1日')
         self.assertEqual(output['考勤透视'].cell(3, 4).value, 1)
+
+
+class ServerlessHttpTests(LocalHttpTests):
+    SERVERLESS = True
 
 
 if __name__ == '__main__':

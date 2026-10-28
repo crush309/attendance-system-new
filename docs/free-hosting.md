@@ -1,10 +1,19 @@
 # 免费部署候选（核查日期：2026-10-28）
 
-建议：Render Free Web Service + Neon Free PostgreSQL。当前项目保留 PostgreSQL 支持，因此迁移时不必把本地 SQLite 数据库放到云端临时磁盘上。
+当前选择：Vercel Hobby + Neon Free PostgreSQL。用户确认个人学习或非商业课题组使用，并拒绝 Render 的银行卡验证。项目保留 PostgreSQL 支持，云端数据使用 Neon。
+
+## 当前 Vercel 部署配置
+
+- 使用 GitHub 部署分支 `codex/render-neon-deployment`，选择 Hobby 免费档。
+- Python 3.12 在 `.python-version` 中指定；根目录 `app.py` 导出 FastAPI 应用供 Vercel 自动识别，依赖继续统一由 `requirements.txt` 管理。
+- 环境变量：`DATABASE_URL`、随机 `JWT_SECRET_KEY`、用户自己填写的 `ADMIN_INITIAL_PASSWORD`。
+- 上传临时文件在 Vercel 环境下保存到系统临时目录，解析后删除；数据库数据不保存在临时磁盘。
+- 请求和响应仍受平台 4.5 MB 限制，大文件需拆分或另行适配上传机制。
 
 ## Render + Neon
 
 - Render 官方免费说明：https://render.com/docs/free
+- 本账户实际提交 Free 服务时仍被要求银行卡验证，因此用户已决定改用其他方案。
 - Neon 官方定价：https://neon.com/pricing
 - Render 免费 Python Web 服务空闲 15 分钟后休眠，下次访问约需一分钟启动；每个工作区每月共享 750 个免费实例小时。免费本地文件系统不持久化，不能用于保存 SQLite 数据库。
 - Render 自带免费 PostgreSQL 30 天后到期，故推荐另接 Neon。
@@ -27,7 +36,7 @@
 - Hobby 限制：https://vercel.com/docs/plans/hobby
 - 请求/响应限制：https://vercel.com/docs/functions/limitations
 - Hobby 免费但限个人非商业用途；函数请求及响应最大 4.5 MB，可能限制考勤 Excel 上传和导出。
-- 项目需要适配临时上传目录及 FastAPI 入口配置，数据库继续使用 Neon。当前未做这些适配。
+- 项目已适配临时上传目录及 FastAPI 入口配置，数据库继续使用 Neon；等待账户登录和线上验证。
 
 ## 未列入推荐
 

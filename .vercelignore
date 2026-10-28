@@ -1,0 +1,13 @@
+.git/
+.venv/
+.env*
+data/
+uploads/
+tests/
+docs/
+**/__pycache__/
+*.log
+~$*
+task_plan.md
+findings.md
+progress.md

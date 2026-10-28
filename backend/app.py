@@ -1,5 +1,6 @@
 import os
 import uuid
+import tempfile
 from datetime import datetime, timedelta
 from typing import List, Optional
 from urllib.parse import quote
@@ -40,7 +41,11 @@ SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "attendance-system-default-secret-
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
+UPLOAD_DIR = (
+    os.path.join(tempfile.gettempdir(), "attendance-system-uploads")
+    if os.environ.get("VERCEL")
+    else os.path.join(os.path.dirname(__file__), "..", "uploads")
+)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="考勤数据分析系统")
