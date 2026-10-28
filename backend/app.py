@@ -13,16 +13,28 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import PatternFill
 import re
 
-from database import (
-    init_db, create_user, authenticate_user, get_user_by_id,
-    update_user_profile, change_password, get_all_users, update_user_permissions,
-    get_rules, update_rules,
-    create_group, get_all_groups, delete_group,
-    bulk_assign_employees, remove_employee_from_group,
-    get_employee_group_map, get_employees_in_group,
-    delete_user,
-)
-from attendance_parser import parse_attendance_file
+if __package__:
+    from .database import (
+        init_db, create_user, authenticate_user, get_user_by_id,
+        update_user_profile, change_password, get_all_users, update_user_permissions,
+        get_rules, update_rules,
+        create_group, get_all_groups, delete_group,
+        bulk_assign_employees, remove_employee_from_group,
+        get_employee_group_map, get_employees_in_group,
+        delete_user,
+    )
+    from .attendance_parser import parse_attendance_file
+else:
+    from database import (
+        init_db, create_user, authenticate_user, get_user_by_id,
+        update_user_profile, change_password, get_all_users, update_user_permissions,
+        get_rules, update_rules,
+        create_group, get_all_groups, delete_group,
+        bulk_assign_employees, remove_employee_from_group,
+        get_employee_group_map, get_employees_in_group,
+        delete_user,
+    )
+    from attendance_parser import parse_attendance_file
 
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "attendance-system-default-secret-change-me")
 ALGORITHM = "HS256"

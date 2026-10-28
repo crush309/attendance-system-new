@@ -20,6 +20,20 @@ bash start.sh
 
 启动后访问 http://localhost:8080
 
+Windows 用户双击 `start.bat` 即可启动。启动窗口需要保持打开。
+
+### 本地数据库与线上数据库
+
+未设置 `DATABASE_URL` 时自动使用 SQLite，数据保存在项目的 `data/attendance.db`，无需安装 PostgreSQL。可通过 `SQLITE_DB_PATH` 指定另一个数据库文件；备份时先停止程序，再复制数据库文件。
+
+设置 `DATABASE_URL` 时使用 PostgreSQL，适合部署到网上。连接失败时会报错，不会自动切换到空的 SQLite。新建的本地数据库不包含原 Railway 的用户、分组和规则，需要单独迁移原数据库。
+
+已经安装依赖时，也可在项目目录运行：
+
+```bash
+python -m uvicorn backend.app:app --host 127.0.0.1 --port 8080
+```
+
 ## 默认账号
 
 | 角色 | 用户名 | 密码 |
@@ -28,7 +42,7 @@ bash start.sh
 
 ## 技术栈
 
-- **后端**：Python FastAPI + SQLite
+- **后端**：Python FastAPI + SQLite（本地）/ PostgreSQL（配置 `DATABASE_URL`）
 - **前端**：Vue.js 3 (CDN) + 原生 CSS
 - **文件解析**：xlrd (.xls) + openpyxl (.xlsx)
 - **认证**：JWT (python-jose)
