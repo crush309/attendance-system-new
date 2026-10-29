@@ -332,7 +332,7 @@ tr.expand-row td{background:var(--bg-primary);padding:16px 20px}
 
       <!-- Groups -->
       <div v-if="activePage==='groups'">
-        <div class="page-header"><h1>分组管理 <span v-if="!canEdit('edit_groups')" class="readonly-tag">👁 仅查看</span></h1><p>按区域/教室划分人员，支持按分组导出</p></div>
+        <div class="page-header"><h1>分组管理 <span v-if="!canEdit('edit_groups')" class="readonly-tag">👁 仅查看</span></h1><p>按姓名保存分组，换表或编号变化后仍可匹配；同名视为同一人</p></div>
         <div v-if="canEdit('edit_groups')" class="card">
           <div class="card-title">🏷️ 创建新分组</div>
           <div style="display:flex;gap:12px">
@@ -346,14 +346,14 @@ tr.expand-row td{background:var(--bg-primary);padding:16px 20px}
             <select v-model="assignGroupId" style="padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;outline:none;min-width:200px">
               <option value="">选择目标分组</option><option v-for="g in groupsList" :key="g.id" :value="g.id">{{g.name}}</option>
             </select>
-            <button class="btn btn-success btn-sm" @click="showAssign=true" :disabled="!assignGroupId">批量分配人员</button>
+            <button class="btn btn-success btn-sm" @click="selNames=[];showAssign=true" :disabled="!assignGroupId">批量分配人员</button>
           </div>
         </div>
         <div class="card">
           <div class="card-title">📦 已有分组 ({{groupsList.length}})</div>
           <div v-if="!groupsList.length" class="empty-state" style="padding:32px"><p>暂无分组</p></div>
           <div v-for="g in groupsList" :key="g.id" class="group-card">
-            <div class="info"><div style="font-size:28px">🏫</div><div><div class="name">{{g.name}}</div><div class="count">{{g.member_count}} 人</div></div></div>
+            <div class="info"><div style="font-size:28px">🏫</div><div><div class="name">{{g.name}}</div><div class="count">{{g.member_count}} 人</div><div v-if="g.legacy_member_count" class="form-hint">旧版编号成员需按姓名重新分配一次</div></div></div>
             <div style="display:flex;gap:8px">
               <button class="btn btn-secondary btn-xs" @click="viewMembers(g)">查看成员</button>
               <button v-if="canEdit('edit_groups')" class="btn btn-danger btn-xs" @click="deleteGroup(g)">删除</button>
@@ -427,13 +427,13 @@ tr.expand-row td{background:var(--bg-primary);padding:16px 20px}
       <h3>分配到 {{(groupsList.find(g=>g.id==assignGroupId)||{}).name}}</h3>
       <div class="select-all" @click="toggleAll">{{allSel?'取消全选':'全选'}}</div>
       <div class="checkbox-list">
-        <label v-for="r in (resultData&&resultData.records||[])" :key="r.emp_id" class="checkbox-item">
-          <input type="checkbox" :value="r.emp_id" v-model="selIds"><span>{{r.emp_id}} - {{r.name}} ({{r.dept}})</span>
+        <label v-for="r in assignableEmployees" :key="r.name" class="checkbox-item">
+          <input type="checkbox" :value="r.name" v-model="selNames"><span>{{r.name}}（本表编号 {{r.emp_id}}；{{r.dept}}）</span>
         </label>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary btn-sm" @click="showAssign=false">取消</button>
-        <button class="btn btn-success btn-sm" @click="doAssign">确认 ({{selIds.length}}人)</button>
+        <button class="btn btn-success btn-sm" @click="doAssign">确认 ({{selNames.length}}人)</button>
       </div>
     </div>
   </div>
@@ -445,7 +445,7 @@ tr.expand-row td{background:var(--bg-primary);padding:16px 20px}
       <div v-if="!viewMems.length" class="empty-state" style="padding:24px"><p>暂无成员</p></div>
       <div v-else>
         <div v-for="eid in viewMems" :key="eid" style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-          <span>{{eid}} — {{empName(eid)}}</span>
+          <span>{{eid}}</span>
           <button v-if="canEdit('edit_groups')" class="btn btn-danger btn-xs" @click="rmFromGroup(eid,viewGroup.id)">移除</button>
         </div>
       </div>
@@ -522,7 +522,7 @@ createApp({
     const newGroupName=ref('');
     const assignGroupId=ref('');
     const showAssign=ref(false);
-    const selIds=ref([]);
+    const selNames=ref([]);
     const showMembers=ref(false);
     const viewGroup=ref(null);
     const viewMems=ref([]);
@@ -568,15 +568,23 @@ createApp({
     function addPeriod(){rulesForm.value.time_periods.push({start:'08:00',end:'12:00'})}
     function rmPeriod(i){if(rulesForm.value.time_periods.length>1)rulesForm.value.time_periods.splice(i,1);else showToast('至少保留一个时间段','error')}
 
-    async function loadGroups(){try{groupsList.value=await(await api('/api/groups')).json()}catch{}}
+    async function loadGroups(){try{
+      const [groups,mapping]=await Promise.all([api('/api/groups').then(r=>r.json()),api('/api/groups/mapping').then(r=>r.json())]);
+      groupsList.value=groups;
+      if(resultData.value)for(const r of resultData.value.records)r.groups=mapping[r.name.trim()]||[];
+    }catch(e){showToast(e.message,'error')}}
     async function createGroup(){if(!newGroupName.value.trim()){showToast('请输入名称','error');return}try{await api('/api/groups',{method:'POST',body:{name:newGroupName.value.trim()}});newGroupName.value='';await loadGroups();showToast('创建成功！')}catch(e){showToast(e.message,'error')}}
     async function deleteGroup(g){if(!confirm('确定删除"'+g.name+'"？'))return;try{await api('/api/groups/'+g.id,{method:'DELETE'});await loadGroups();showToast('已删除')}catch(e){showToast(e.message,'error')}}
-    async function doAssign(){if(!selIds.value.length){showToast('请勾选','error');return}try{const d=await(await api('/api/groups/assign',{method:'POST',body:{emp_ids:selIds.value,group_id:parseInt(assignGroupId.value)}})).json();showAssign.value=false;selIds.value=[];await loadGroups();showToast(d.message)}catch(e){showToast(e.message,'error')}}
-    const allSel=computed(()=>resultData.value&&selIds.value.length===resultData.value.records.length);
-    function toggleAll(){allSel.value?selIds.value=[]:selIds.value=(resultData.value?.records||[]).map(r=>r.emp_id)}
+    async function doAssign(){if(!selNames.value.length){showToast('请勾选','error');return}try{const d=await(await api('/api/groups/assign',{method:'POST',body:{employee_names:selNames.value,group_id:parseInt(assignGroupId.value)}})).json();showAssign.value=false;selNames.value=[];await loadGroups();showToast(d.message)}catch(e){showToast(e.message,'error')}}
+    const assignableEmployees=computed(()=>{
+      const people=new Map();
+      for(const r of resultData.value?.records||[]){const name=r.name.trim();if(name&&!people.has(name))people.set(name,{...r,name})}
+      return [...people.values()];
+    });
+    const allSel=computed(()=>assignableEmployees.value.length>0&&selNames.value.length===assignableEmployees.value.length);
+    function toggleAll(){allSel.value?selNames.value=[]:selNames.value=assignableEmployees.value.map(r=>r.name)}
     async function viewMembers(g){viewGroup.value=g;try{viewMems.value=await(await api('/api/groups/'+g.id+'/members')).json();showMembers.value=true}catch(e){showToast(e.message,'error')}}
-    function empName(eid){const r=(resultData.value?.records||[]).find(r=>r.emp_id===eid);return r?r.name:'未知'}
-    async function rmFromGroup(eid,gid){try{await api('/api/groups/remove',{method:'POST',body:{emp_id:eid,group_id:gid}});viewMems.value=viewMems.value.filter(e=>e!==eid);await loadGroups();showToast('已移除')}catch(e){showToast(e.message,'error')}}
+    async function rmFromGroup(eid,gid){try{await api('/api/groups/remove',{method:'POST',body:{employee_name:eid,group_id:gid}});viewMems.value=viewMems.value.filter(e=>e!==eid);await loadGroups();showToast('已移除')}catch(e){showToast(e.message,'error')}}
 
     function openPerm(u){permUser.value=u;permRules.value=!!(u.permissions&&u.permissions.edit_rules);permGroups.value=!!(u.permissions&&u.permissions.edit_groups);permUsers.value=!!(u.permissions&&u.permissions.manage_users);showPerm.value=true}
     async function savePerm(){try{await api('/api/users/'+permUser.value.id+'/permissions',{method:'PUT',body:{permissions:{edit_rules:permRules.value,edit_groups:permGroups.value,manage_users:permUsers.value}}});showPerm.value=false;await loadUsers();showToast('权限已更新')}catch(e){showToast(e.message,'error')}}
@@ -680,11 +688,11 @@ createApp({
     return{token,user,activePage,sidebarCollapsed,isRegister,loginError,loginLoading,loginForm,
       rules,rulesForm,uploading,uploadProgress,resultData,searchQuery,sortKey,sortDir,
       usersList,groupsList,toast,filtered,paged,totalPages,visPages,page,expanded,
-      exportGroupId,newGroupName,assignGroupId,showAssign,selIds,allSel,
+      exportGroupId,newGroupName,assignGroupId,showAssign,selNames,allSel,assignableEmployees,
       showMembers,viewGroup,viewMems,profileForm,pwForm,showPerm,permUser,permRules,permGroups,permUsers,
       showMerge,mergeFiles,mergeLoading,
       canEdit,handleLogin,logout,saveRules,addPeriod,rmPeriod,
-      createGroup,deleteGroup,doAssign,toggleAll,viewMembers,empName,rmFromGroup,
+      createGroup,deleteGroup,doAssign,toggleAll,viewMembers,rmFromGroup,
       openPerm,deleteUser,savePerm,handleFileSelect,handleDrop,exportExcel,sortBy,sortIcon,toggle,
       showToast,saveProfile,changePassword,handleAvatar,handleMergeFileSelect,handleMergeDrop,doMergeExport,renderCharts};
   }

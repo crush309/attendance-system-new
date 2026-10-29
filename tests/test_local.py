@@ -1,4 +1,5 @@
 import importlib
+from contextlib import closing
 import os
 from pathlib import Path
 import sys
@@ -69,6 +70,7 @@ class LocalDatabaseTests(unittest.TestCase):
         try:
             os.environ['ADMIN_INITIAL_PASSWORD'] = 'test-cloud-bootstrap-password'
             importlib.reload(sqlite_database)
+
             os.environ['SQLITE_DB_PATH'] = str(Path(self.temp.name) / 'cloud.db')
             sqlite_database.init_db()
             self.assertIsNone(sqlite_database.authenticate_user('admin', 'admin123'))
@@ -83,6 +85,22 @@ class LocalDatabaseTests(unittest.TestCase):
             else:
                 os.environ['ADMIN_INITIAL_PASSWORD'] = previous
             importlib.reload(sqlite_database)
+
+
+    def test_legacy_ids_are_preserved_without_becoming_name_assignments(self):
+        import sqlite_database
+        group = self.db.create_group('旧版分组')
+        with closing(sqlite_database.get_conn()) as conn, conn:
+            conn.execute('INSERT INTO employee_groups (emp_id, group_id) VALUES (?, ?)', ('001', group['id']))
+        self.db.init_db()
+        self.assertEqual(self.db.get_employee_group_map(), {})
+        self.assertEqual(self.db.get_employees_in_group(group['id']), [])
+        self.assertEqual(self.db.get_all_groups()[0]['legacy_member_count'], 1)
+        self.assertEqual(self.db.bulk_assign_employees([' 张三 ', '张三', '李四'], group['id']), 2)
+        self.db.init_db()
+        self.assertEqual(set(self.db.get_employees_in_group(group['id'])), {'张三', '李四'})
+        with closing(sqlite_database.get_conn()) as conn:
+            self.assertEqual(conn.execute('SELECT emp_id FROM employee_groups').fetchone()[0], '001')
 
 
 if __name__ == '__main__':

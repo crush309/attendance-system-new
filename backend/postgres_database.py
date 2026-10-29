@@ -80,6 +80,16 @@ def init_db():
             UNIQUE(emp_id, group_id)
         )
     """)
+    # Legacy employee_groups keeps ID assignments for reference only.
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS employee_name_groups (
+            id SERIAL PRIMARY KEY,
+            employee_name VARCHAR(255) NOT NULL,
+            group_id INTEGER NOT NULL,
+            FOREIGN KEY (group_id) REFERENCES groups_table(id) ON DELETE CASCADE,
+            UNIQUE(employee_name, group_id)
+        )
+    """)
     conn.commit()
 
     c.execute("SELECT COUNT(*) FROM attendance_rules")
@@ -237,9 +247,10 @@ def create_group(name: str) -> Optional[dict]:
 def get_all_groups() -> List[dict]:
     conn = get_conn()
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("""SELECT g.id, g.name, g.created_at, COUNT(eg.id) as member_count
-        FROM groups_table g LEFT JOIN employee_groups eg ON g.id = eg.group_id
-        GROUP BY g.id ORDER BY g.id""")
+    c.execute("""SELECT g.id, g.name, g.created_at,
+        (SELECT COUNT(*) FROM employee_name_groups ng WHERE ng.group_id = g.id) as member_count,
+        (SELECT COUNT(*) FROM employee_groups eg WHERE eg.group_id = g.id) as legacy_member_count
+        FROM groups_table g ORDER BY g.id""")
     rows = [dict(r) for r in c.fetchall()]
     conn.close(); return rows
 
@@ -247,47 +258,55 @@ def get_all_groups() -> List[dict]:
 def delete_group(group_id: int) -> bool:
     conn = get_conn()
     c = conn.cursor()
+    c.execute("DELETE FROM employee_name_groups WHERE group_id = %s", (group_id,))
     c.execute("DELETE FROM employee_groups WHERE group_id = %s", (group_id,))
     c.execute("DELETE FROM groups_table WHERE id = %s", (group_id,))
     conn.commit(); ok = c.rowcount > 0; conn.close(); return ok
 
 
-def bulk_assign_employees(emp_ids: List[str], group_id: int) -> int:
+def bulk_assign_employees(employee_names: List[str], group_id: int) -> int:
+    names = list(dict.fromkeys(name.strip() for name in employee_names))
+    if any(not name or len(name) > 255 for name in names):
+        raise ValueError("Invalid employee name")
     conn = get_conn()
-    c = conn.cursor()
-    count = 0
-    for eid in emp_ids:
-        try:
-            c.execute("INSERT INTO employee_groups (emp_id, group_id) VALUES (%s, %s)", (eid, group_id)); count += 1
-        except psycopg2.IntegrityError:
-            conn.rollback()
-    conn.commit(); conn.close(); return count
+    try:
+        c = conn.cursor()
+        count = 0
+        for name in names:
+            c.execute("""INSERT INTO employee_name_groups (employee_name, group_id)
+                VALUES (%s, %s) ON CONFLICT (employee_name, group_id) DO NOTHING""", (name, group_id))
+            count += c.rowcount
+        conn.commit()
+        return count
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-def remove_employee_from_group(emp_id: str, group_id: int) -> bool:
+def remove_employee_from_group(employee_name: str, group_id: int) -> bool:
     conn = get_conn()
     c = conn.cursor()
-    c.execute("DELETE FROM employee_groups WHERE emp_id = %s AND group_id = %s", (emp_id, group_id))
+    c.execute("DELETE FROM employee_name_groups WHERE employee_name = %s AND group_id = %s", (employee_name.strip(), group_id))
     conn.commit(); ok = c.rowcount > 0; conn.close(); return ok
 
 
 def get_employee_group_map() -> Dict[str, List[dict]]:
     conn = get_conn()
     c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("""SELECT eg.emp_id, g.id as group_id, g.name as group_name
-        FROM employee_groups eg JOIN groups_table g ON eg.group_id = g.id ORDER BY g.id""")
+    c.execute("""SELECT eg.employee_name, g.id as group_id, g.name as group_name
+        FROM employee_name_groups eg JOIN groups_table g ON eg.group_id = g.id ORDER BY g.id""")
     result = {}
     for row in c.fetchall():
-        eid = row["emp_id"]
-        if eid not in result: result[eid] = []
-        result[eid].append({"id": row["group_id"], "name": row["group_name"]})
+        result.setdefault(row["employee_name"], []).append({"id": row["group_id"], "name": row["group_name"]})
     conn.close(); return result
 
 
 def get_employees_in_group(group_id: int) -> List[str]:
     conn = get_conn()
     c = conn.cursor()
-    c.execute("SELECT emp_id FROM employee_groups WHERE group_id = %s", (group_id,))
+    c.execute("SELECT employee_name FROM employee_name_groups WHERE group_id = %s ORDER BY employee_name", (group_id,))
     rows = [r[0] for r in c.fetchall()]
     conn.close(); return rows
 
@@ -300,7 +319,6 @@ def delete_user(uid: int) -> bool:
         if not c.fetchone():
             conn.close()
             return False
-        c.execute("DELETE FROM employee_groups WHERE emp_id = %s", (str(uid),))
         c.execute("DELETE FROM users WHERE id = %s", (uid,))
         conn.commit()
         conn.close()

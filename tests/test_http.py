@@ -103,6 +103,56 @@ class LocalHttpTests(unittest.TestCase):
         self.assertEqual(output['考勤明细'].cell(2, 4).value, '10月1日')
         self.assertEqual(output['考勤透视'].cell(3, 4).value, 1)
 
+    def upload_rows(self, rows, token):
+        wb = Workbook()
+        ws = wb.active
+        ws.append(['统计日期:2026/09/01-2026/09/02'])
+        ws.append(['工号', '姓名', '部门', '1', '2'])
+        for eid, name in rows:
+            ws.append([eid, name, '测试部门', '08:30\n14:00', None])
+        buf = BytesIO()
+        wb.save(buf)
+        boundary = 'group-name-test'
+        body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="groups.xlsx"\r\n'
+                'Content-Type: application/octet-stream\r\n\r\n').encode()
+        body += buf.getvalue() + f'\r\n--{boundary}--\r\n'.encode()
+        return json.loads(self.request('/api/upload', body, token, 'multipart/form-data; boundary=' + boundary))
+
+    def test_groups_follow_names_when_ids_change_in_upload_and_export(self):
+        token = json.loads(self.request('/api/login', {'username': 'admin', 'password': 'admin123'}))['token']
+        group = json.loads(self.request('/api/groups', {'name': '按姓名验证组'}, token))
+        gid = group['id']
+        self.upload_rows([('001', '张三'), ('002', '李四')], token)
+        assigned = json.loads(self.request('/api/groups/assign',
+                                          {'employee_names': [' 张三 ', '张三'], 'group_id': gid}, token))
+        self.assertEqual(assigned['count'], 1)
+        result = self.upload_rows([('099', '张三'), ('001', '王五'), ('100', '李四')], token)
+        self.assertEqual(result['records'][0]['groups'], [{'id': gid, 'name': '按姓名验证组'}])
+        self.assertEqual(result['records'][1]['groups'], [])
+        self.assertEqual(json.loads(self.request(f'/api/groups/{gid}/members', token=token)), ['张三'])
+        mapping = json.loads(self.request('/api/groups/mapping', token=token))
+        self.assertEqual(mapping['张三'], [{'id': gid, 'name': '按姓名验证组'}])
+        exported = self.request('/api/export', {'records': result['records'], 'group_id': gid}, token)
+        output = load_workbook(BytesIO(exported), data_only=True)
+        summary = output.worksheets[0]
+        self.assertEqual(summary.max_row, 2)
+        self.assertEqual(summary.cell(2, 1).value, '099')
+        self.assertEqual(summary.cell(2, 2).value, '张三')
+        self.assertEqual(summary.cell(2, 4).value, '按姓名验证组')
+        self.request('/api/groups/remove', {'employee_name': ' 张三 ', 'group_id': gid}, token)
+        self.assertEqual(json.loads(self.request(f'/api/groups/{gid}/members', token=token)), [])
+        self.assertEqual(self.upload_rows([('001', '张三')], token)['records'][0]['groups'], [])
+
+    def test_old_id_payloads_and_blank_names_are_rejected(self):
+        token = json.loads(self.request('/api/login', {'username': 'admin', 'password': 'admin123'}))['token']
+        gid = json.loads(self.request('/api/groups', {'name': '校验组'}, token))['id']
+        for payload in ({'emp_ids': ['001'], 'group_id': gid},
+                        {'employee_names': ['   '], 'group_id': gid},
+                        {'employee_names': [], 'group_id': gid}):
+            with self.assertRaises(HTTPError) as invalid:
+                self.request('/api/groups/assign', payload, token)
+            self.assertEqual(invalid.exception.code, 422)
+
 
 class ServerlessHttpTests(LocalHttpTests):
     SERVERLESS = True

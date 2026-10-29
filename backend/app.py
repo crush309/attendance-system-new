@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, UploadFile, File, Header
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from jose import jwt, JWTError
 from io import BytesIO
 from openpyxl.utils import get_column_letter
@@ -88,12 +88,28 @@ class GroupCreate(BaseModel):
     name: str
 
 class EmployeeAssign(BaseModel):
-    emp_ids: List[str]
+    employee_names: List[str]
     group_id: int
 
+    @field_validator('employee_names')
+    @classmethod
+    def validate_names(cls, names):
+        names = [name.strip() for name in names]
+        if not names or any(not name or len(name) > 255 for name in names):
+            raise ValueError('请选择姓名，姓名不能为空且不能超过255字符')
+        return list(dict.fromkeys(names))
+
 class EmployeeRemove(BaseModel):
-    emp_id: str
+    employee_name: str
     group_id: int
+
+    @field_validator('employee_name')
+    @classmethod
+    def validate_name(cls, name):
+        name = name.strip()
+        if not name or len(name) > 255:
+            raise ValueError('姓名不能为空且不能超过255字符')
+        return name
 
 class ProfileUpdate(BaseModel):
     nickname: Optional[str] = None
@@ -240,7 +256,7 @@ async def upload_file(file: UploadFile = File(...), authorization: str = Header(
     os.remove(filepath)
     group_map = get_employee_group_map()
     for rec in result["records"]:
-        rec["groups"] = group_map.get(rec["emp_id"], [])
+        rec["groups"] = group_map.get(rec["name"].strip(), [])
     return result
 
 
@@ -267,13 +283,15 @@ def api_delete_group(group_id: int, authorization: str = Header(None, alias="Aut
 @app.post("/api/groups/assign")
 def api_assign(req: EmployeeAssign, authorization: str = Header(None, alias="Authorization")):
     is_admin_or_perm(authorization, "edit_groups")
-    count = bulk_assign_employees(req.emp_ids, req.group_id)
+    if not any(g['id'] == req.group_id for g in get_all_groups()):
+        raise HTTPException(status_code=404, detail="分组不存在")
+    count = bulk_assign_employees(req.employee_names, req.group_id)
     return {"message": f"已分配 {count} 人", "count": count}
 
 @app.post("/api/groups/remove")
 def api_remove(req: EmployeeRemove, authorization: str = Header(None, alias="Authorization")):
     is_admin_or_perm(authorization, "edit_groups")
-    if not remove_employee_from_group(req.emp_id, req.group_id):
+    if not remove_employee_from_group(req.employee_name, req.group_id):
         raise HTTPException(status_code=404, detail="未找到该分配关系")
     return {"message": "已移除"}
 
@@ -281,6 +299,12 @@ def api_remove(req: EmployeeRemove, authorization: str = Header(None, alias="Aut
 def api_get_members(group_id: int, authorization: str = Header(None, alias="Authorization")):
     get_payload(authorization)
     return get_employees_in_group(group_id)
+
+
+@app.get("/api/groups/mapping")
+def api_get_group_mapping(authorization: str = Header(None, alias="Authorization")):
+    get_payload(authorization)
+    return get_employee_group_map()
 
 
 # ── Export ──
@@ -293,8 +317,8 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
     include_detail = data.get("include_detail", True)
 
     if group_filter is not None:
-        emp_ids = set(get_employees_in_group(group_filter))
-        records = [r for r in records if r["emp_id"] in emp_ids]
+        employee_names = set(get_employees_in_group(group_filter))
+        records = [r for r in records if r["name"].strip() in employee_names]
         group_name = ""
         for g in get_all_groups():
             if g["id"] == group_filter:
@@ -330,7 +354,7 @@ async def export_excel(data: dict, authorization: str = Header(None, alias="Auth
 
     group_map = get_employee_group_map()
     for i, rec in enumerate(records, 2):
-        groups = group_map.get(rec["emp_id"], [])
+        groups = group_map.get(rec["name"].strip(), [])
         group_str = ", ".join(g["name"] for g in groups) if groups else "未分组"
         for col, v in enumerate([rec["emp_id"], rec["name"], rec["dept"], group_str,
                                   rec["attendance_days"], rec["absent_days"], rec["abnormal_days"], rec["total_punches"]], 1):
